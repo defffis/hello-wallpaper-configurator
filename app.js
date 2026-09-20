@@ -38,7 +38,10 @@
     $('quickGlass').setAttribute('aria-pressed',String(state.material==='glass'));
     $('quickGlass').textContent=state.material==='glass'?'◆ Liquid Glass включён':'◇ Попробовать Liquid Glass';
     $('glassSettings').hidden=state.material!=='glass';
-    $('motionHint').textContent=state.text.trim()==='hello'?'Надпись пишется одним движением и остаётся на экране.':'Для своего текста используется плавное появление.';
+    $('motionHint').textContent=state.text.trim()!=='hello'?'Для своего текста используется плавное появление.':state.animation==='write'?'Надпись пишется одним движением и остаётся на экране.':'Надпись плавно проявляется и остаётся на экране.';
+    $('wallpaperShell').style.setProperty('--wallpaper-aspect',state.width/state.height);
+    $('wallpaperShell').style.setProperty('--preview-width',state.width>state.height?'100%':'58%');
+    $('wallpaperShell').style.setProperty('--preview-max',state.width>state.height?'580px':'235px');
     $('quality').disabled=state.format!=='jpeg';
     $('stroke').disabled=state.text.trim()!=='hello';
     $('textHint').textContent=state.text.trim()==='hello'?'Apple / iPhone Hello · векторная надпись':'Фирменный стиль Apple Hello доступен только для слова «hello». Другой текст использует рукописный шрифт устройства.';
@@ -184,7 +187,7 @@
   $('timeline').addEventListener('input',()=>{stopPreview();motionFrame(Number($('timeline').value)/100*totalDuration());});
   function videoDimensions(s){const scale=Math.min(1,s.videoSize/Math.min(s.width,s.height),2560/Math.max(s.width,s.height));return {width:Math.max(2,Math.round(s.width*scale/2)*2),height:Math.max(2,Math.round(s.height*scale/2)*2)};}
   function videoType(){if(typeof MediaRecorder==='undefined')return null;const choices=state.videoFormat==='webm'?['video/webm;codecs=vp9','video/webm;codecs=vp8','video/webm']:['video/mp4;codecs=avc1.42E01E','video/mp4','video/webm;codecs=vp9','video/webm;codecs=vp8','video/webm'];return choices.find(type=>MediaRecorder.isTypeSupported(type))||null;}
-  function updateVideoInfo(){const d=videoDimensions(state),type=videoType();$('videoInfo').textContent=type?`${d.width} × ${d.height} px · 30 кадров/с · ${totalDuration().toFixed(1)} с · ${type.includes('mp4')?'MP4':'WebM (MP4 недоступен в этом режиме)'}`:'Этот браузер не поддерживает запись видео. Попробуйте современный Safari, Chrome или Edge.';$('exportVideo').disabled=!type||!state.showText||!state.text.trim();}
+  function updateVideoInfo(){const d=videoDimensions(state),type=videoType();$('videoInfo').textContent=type?`${d.width} × ${d.height} px · до 30 кадров/с · ≈${totalDuration().toFixed(1)} с · ${type.includes('mp4')?'MP4':'WebM (MP4 недоступен в этом режиме)'}`:'Этот браузер не поддерживает запись видео. Попробуйте современный Safari, Chrome или Edge.';$('exportVideo').disabled=!type||!state.showText||!state.text.trim();}
   // Record the same compositor used for PNG and preview. No third-party services or uploads.
   async function exportVideo(){
     if(exporting)return;const type=videoType();if(!type)return;stopPreview();if(raf)cancelAnimationFrame(raf);render();exporting=true;
