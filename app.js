@@ -11,7 +11,7 @@
   const helloPath = new Path2D(HELLO);
   const canvas = $('canvas'), ctx = canvas.getContext('2d', {alpha:false});
   let state = {...defaults}, revision = 0, raf = 0, blobTimer, prepared = null, dialogURL = null, dialogFile = null;
-  let tileKey = '', pattern = null;
+  let tileKey = '', pattern = null, desktopURL = null;
   const clamp = (v,min,max) => Math.min(max,Math.max(min,v));
   function sanitize(raw) {
     const result = {...defaults};
@@ -113,15 +113,17 @@
   function releaseDialog(){if(dialogURL)URL.revokeObjectURL(dialogURL);dialogURL=null;dialogFile=null;$('savedImage').removeAttribute('src');}
   function openSave(file){releaseDialog();dialogFile=file;dialogURL=URL.createObjectURL(file);$('savedImage').src=dialogURL;$('openImage').href=dialogURL;$('downloadImage').href=dialogURL;$('downloadImage').download=file.name;$('share').hidden=!canShare(file);if(!$('saveDialog').open)$('saveDialog').showModal();}
   async function share(file){try{await navigator.share({files:[file],title:'Hello wallpaper'});$('status').textContent='Изображение передано в системное меню.';}catch(e){if(e.name!=='AbortError'){openSave(file);$('status').textContent='Выберите другой способ сохранения в открытом окне.';}}}
-  function download(file){const url=URL.createObjectURL(file),a=document.createElement('a');a.href=url;a.download=file.name;document.body.append(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(url),60000);$('status').textContent=`Готово: ${file.name}`;}
-  $('export').addEventListener('click',async()=>{
+  function download(file){if(desktopURL)URL.revokeObjectURL(desktopURL);desktopURL=URL.createObjectURL(file);const a=document.createElement('a');a.href=desktopURL;a.download=file.name;a.textContent=`Скачать ${file.name}`;$('status').textContent='Файл готов. Если загрузка не началась: ';$('status').append(a);a.click();}
+  async function exportWallpaper(){
+    if($('export').disabled)return;
     // Capture current file synchronously; never await before a prepared Web Share call.
     if(isMobile()&&prepared?.revision===revision){const file=prepared.file;if(canShare(file))await share(file);else openSave(file);return;}
     const btn=$('export');btn.disabled=true;$('quickExport').disabled=true;$('status').textContent='Готовим изображение…';
     const version=revision,name=filename();
     try{if(raf)cancelAnimationFrame(raf);render();const blob=await makeBlob();const file=new File([blob],name,{type:blob.type});if(isMobile()){if(version===revision)prepared={revision:version,file};openSave(file);$('status').textContent='Изображение готово к сохранению.';}else download(file);}catch(e){$('status').textContent=e.message;}finally{btn.disabled=false;$('quickExport').disabled=false;}
-  });
-  $('quickExport').addEventListener('click',()=>{if(!$('export').disabled)$('export').click();});
+  }
+  $('export').addEventListener('click',exportWallpaper);
+  $('quickExport').addEventListener('click',exportWallpaper);
   $('share').addEventListener('click',()=>{if(dialogFile)share(dialogFile);});
   $('closeDialog').addEventListener('click',()=>$('saveDialog').close());
   $('saveDialog').addEventListener('close',releaseDialog);
