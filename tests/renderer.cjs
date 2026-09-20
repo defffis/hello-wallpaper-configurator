@@ -3,15 +3,15 @@ const {createCanvas,Path2D,DOMMatrix,loadImage}=require('@napi-rs/canvas');
 const root=require('path').resolve(__dirname,'..');
 const html=fs.readFileSync(root+'/index.html','utf8');
 const els={},stored=new Map(),pending=[];
-function element(id='',value='') {return {id,value,checked:false,disabled:false,textContent:'',style:{setProperty(){}},dataset:{},attributes:{},handlers:{},options:[],addEventListener(t,f){(this.handlers[t]??=[]).push(f)},setAttribute(k,v){this.attributes[k]=v},removeAttribute(k){delete this.attributes[k]},append(){},click(){for(const f of this.handlers.click||[])f()},remove(){},showModal(){this.open=true},close(){this.open=false;(this.handlers.close||[]).forEach(f=>f())}};}
-for(const tag of html.matchAll(/<(input|select|button|canvas|div|p|strong|dialog|img|a)\b[^>]*\bid="([^"]+)"[^>]*>/g)){const e=els[tag[2]]=element(tag[2],/\bvalue="([^"]*)"/.exec(tag[0])?.[1]||'');e.checked=/\bchecked\b/.test(tag[0]);}
+function element(id='',value='') {return {id,value,checked:false,disabled:false,textContent:'',style:{setProperty(){}},dataset:{},attributes:{},handlers:{},options:[],addEventListener(t,f){(this.handlers[t]??=[]).push(f)},setAttribute(k,v){this.attributes[k]=v},removeAttribute(k){delete this.attributes[k]},append(){},click(){for(const f of this.handlers.click||[])f()},remove(){},pause(){},load(){},showModal(){this.open=true},close(){this.open=false;(this.handlers.close||[]).forEach(f=>f())}};}
+for(const tag of html.matchAll(/<(input|select|button|canvas|div|p|strong|dialog|img|video|progress|span|a)\b[^>]*\bid="([^"]+)"[^>]*>/g)){const e=els[tag[2]]=element(tag[2],/\bvalue="([^"]*)"/.exec(tag[0])?.[1]||'');e.checked=/\bchecked\b/.test(tag[0]);}
 els.preset.options=['1290x2796','1206x2622','1179x2556','1170x2532','custom'].map(value=>({value}));
 const c=createCanvas(1290,2796);c.setAttribute=()=>{};c.toBlob=(cb,mime,q)=>c.encode(mime==='image/jpeg'?'jpeg':'png',Math.round(q*100)).then(b=>cb(new Blob([b],{type:mime})));
 els.canvas=c;const preview=createCanvas(620,1344);preview.setAttribute=()=>{};preview.getBoundingClientRect=()=>({width:310});els.previewCanvas=preview;
 const outputs=[...html.matchAll(/<output[^>]*for="([^"]+)"/g)].map(m=>({htmlFor:m[1],textContent:''}));
-const context={console,window:{devicePixelRatio:1},document:{getElementById:id=>els[id],querySelectorAll:q=>q.startsWith('output')?outputs:[],createElement:t=>t==='canvas'?createCanvas(1,1):element(),body:{append(){}}},Path2D,DOMMatrix,localStorage:{getItem:k=>stored.get(k)||null,setItem:(k,v)=>stored.set(k,v),removeItem:k=>stored.delete(k)},navigator:{userAgent:'test desktop',platform:'Linux',maxTouchPoints:0},setTimeout,clearTimeout,requestAnimationFrame:f=>{pending.push(f);return pending.length},cancelAnimationFrame(){},Blob,File,URL};
+const context={console,window:{devicePixelRatio:1},document:{addEventListener(){},getElementById:id=>els[id],querySelectorAll:q=>q.startsWith('output')?outputs:[],createElement:t=>t==='canvas'?createCanvas(1,1):element(),body:{append(){}}},Path2D,DOMMatrix,localStorage:{getItem:k=>stored.get(k)||null,setItem:(k,v)=>stored.set(k,v),removeItem:k=>stored.delete(k)},navigator:{userAgent:'test desktop',platform:'Linux',maxTouchPoints:0},setTimeout,clearTimeout,requestAnimationFrame:f=>{pending.push(f);return pending.length},cancelAnimationFrame(){},Blob,File,URL};
 vm.createContext(context);
-let source=fs.readFileSync(root+'/app.js','utf8');source=source.replace('updateUI(true);render();\n})();','updateUI(true);render();\nthis.qa={get state(){return state},set(raw){state=sanitize({...state,...raw});updateUI(true);changed();render()},render,makeBlob,filename,hslToHex,get prepared(){return prepared}};\n})();');
+let source=fs.readFileSync(root+'/app.js','utf8');source=source.replace('updateUI(true);render();\n})();','updateUI(true);render();\nthis.qa={get state(){return state},set(raw){state=sanitize({...state,...raw});updateUI(true);changed();render()},render,makeBlob,filename,hslToHex,drawText,motionProgress,videoDimensions,partialHello,get prepared(){return prepared}};\n})();');
 vm.runInContext(source,context);const qa=context.qa;
 (async()=>{
  let count=0;function check(label,test){test();count++;console.log('PASS '+label)}
@@ -26,6 +26,16 @@ vm.runInContext(source,context);const qa=context.qa;
  qa.set({format:'jpeg',quality:10});const low=await qa.makeBlob();qa.set({quality:100});const high=await qa.makeBlob();check('JPEG quality affects output',()=>assert(high.size>low.size));
  for(let i=0;i<40;i++){els.random.click();for(const key of ['bg1','bg2']){const hex=qa.state[key],v=[1,3,5].map(j=>parseInt(hex.slice(j,j+2),16)/255),max=Math.max(...v),min=Math.min(...v),l=(max+min)/2,s=(max-min)/(1-Math.abs(2*l-1));assert(l>=.67&&l<=.86);assert(s>=.32&&s<=.56)}}check('40 pastel randomizations',()=>{});
  els.reset.click();qa.render();check('Reset clears storage and restores all defaults',()=>{assert.equal(stored.size,0);assert.equal(qa.state.text,'hello');assert.equal(qa.state.width,1290);assert.equal(qa.state.bg1,'#7d74f6')});
+ 
+ qa.set({width:640,height:960,material:'solid',text:'hello',showText:true});const plain=c.toBuffer('image/png');qa.set({material:'glass'});check('Glass differs from solid',()=>assert(!plain.equals(c.toBuffer('image/png'))));
+ fs.writeFileSync(root+'/assets/glass-preview.png',c.toBuffer('image/png'));
+ qa.set({glassDepth:10});const shallow=c.toBuffer('image/png');qa.set({glassDepth:100});check('Glass depth changes pixels',()=>assert(!shallow.equals(c.toBuffer('image/png'))));
+ check('Animation starts empty, completes once and holds',()=>{assert.equal(qa.motionProgress(0),0);assert.equal(qa.motionProgress(.2),0);assert(qa.motionProgress(1)>0&&qa.motionProgress(1)<1);assert.equal(qa.motionProgress(2.2),1);assert.equal(qa.motionProgress(200),1)});
+ const bg=createCanvas(640,960);bg.getContext('2d').fillStyle='#719ba6';bg.getContext('2d').fillRect(0,0,640,960);
+ const hashes=[];for(const time of [0,.7,1.5,2.8,10]){const frame=createCanvas(640,960),ctx=frame.getContext('2d');ctx.drawImage(bg,0,0);qa.drawText(ctx,qa.state,qa.motionProgress(time),bg);hashes.push(frame.toBuffer('image/png'));}
+ check('Distinct motion frames and identical held final frames',()=>{assert(!hashes[0].equals(hashes[1]));assert(!hashes[1].equals(hashes[2]));assert(!hashes[2].equals(hashes[3]));assert(hashes[3].equals(hashes[4]));});
+ check('Video dimensions are even and bounded',()=>{for(const [width,height] of [[1290,2796],[6000,320],[6000,6000],[1920,1080]]){const d=qa.videoDimensions({width,height,videoSize:1080});assert.equal(d.width%2,0);assert.equal(d.height%2,0);assert(Math.max(d.width,d.height)<=2560);}});
+ qa.set({material:'glass',text:'Даниил'});check('Glass supports custom text',()=>assert(c.toBuffer('image/png').length>1000));qa.set({material:'solid',text:'hello'});
  context.navigator.userAgent='iPhone';context.navigator.canShare=()=>true;let shared=0;context.navigator.share=async()=>{shared++};
  qa.set({width:640,height:960});await new Promise(r=>setTimeout(r,700));
  check('Mobile export prepared before click',()=>assert(qa.prepared));

@@ -2,13 +2,14 @@
 (() => {
   const $ = id => document.getElementById(id);
   const STORAGE_KEY = 'hello-wallpaper:v1';
-  const defaults = Object.freeze({width:1290,height:2796,bg1:'#7d74f6',bg2:'#9b96ff',gradient:55,vignette:12,dotColor:'#ffffff',dotOpacity:65,dotSize:2.2,spacing:18,offsetRows:false,text:'hello',textColor:'#ffffff',textSize:48,textY:72,textX:50,stroke:100,angle:0,textOpacity:100,showText:true,format:'png',quality:95});
-  const limits = {width:[320,6000],height:[320,6000],gradient:[0,100],vignette:[0,50],dotOpacity:[0,100],dotSize:[.5,8],spacing:[6,40],textSize:[15,90],textY:[10,92],textX:[5,95],stroke:[60,160],angle:[-25,25],textOpacity:[0,100],quality:[10,100]};
+  const defaults = Object.freeze({width:1290,height:2796,bg1:'#7d74f6',bg2:'#9b96ff',gradient:55,vignette:12,dotColor:'#ffffff',dotOpacity:65,dotSize:2.2,spacing:18,offsetRows:false,text:'hello',textColor:'#ffffff',textSize:48,textY:72,textX:50,stroke:100,angle:0,textOpacity:100,showText:true,format:'png',quality:95,material:'solid',glassDepth:65,animation:'write',duration:2,videoSize:720,videoFormat:'auto'});
+  const limits = {width:[320,6000],height:[320,6000],gradient:[0,100],vignette:[0,50],dotOpacity:[0,100],dotSize:[.5,8],spacing:[6,40],textSize:[15,90],textY:[10,92],textX:[5,95],stroke:[60,160],angle:[-25,25],textOpacity:[0,100],quality:[10,100],glassDepth:[10,100],duration:[1,4],videoSize:[480,1080]};
   const palettes = [ ['Purple','#7d74f6','#9b96ff'],['Blue','#91a8d6','#b7c9e8'],['Pink','#e49ab6','#f1bdd0'],['Mint','#8dccbb','#b6e0d3'],['Peach','#e6b09d','#f4d2bd'],['Lavender','#a99cd6','#c7bce8'],['Sky','#8bbce5','#b7d6f0'],['Cream','#e0cfab','#f0e3c9'] ];
   // Hand-prepared continuous Bézier outline, matched to the supplied reference.
   // Coordinates are independent of installed fonts. The source is also in assets/hello.svg.
   const HELLO = 'M 18 199 C 68 179 127 150 153 105 C 180 60 190 12 164 11 C 136 10 120 53 113 93 C 106 131 101 174 92 211 C 108 156 143 112 173 118 C 208 125 171 182 188 202 C 207 225 272 209 307 181 C 340 155 350 117 319 113 C 290 109 266 136 271 173 C 278 218 337 224 380 205 C 424 186 471 107 479 57 C 488 13 465 -4 443 20 C 417 47 400 117 403 169 C 405 203 414 216 441 216 C 485 216 534 164 561 104 C 582 57 594 13 572 11 C 544 6 523 57 515 95 C 507 132 506 170 516 195 C 530 235 581 217 616 179 C 631 163 635 145 653 131 C 674 114 705 118 719 139 C 736 165 721 205 696 215 C 671 225 646 211 643 186 C 640 163 650 136 671 127 C 697 115 716 137 745 129 C 761 125 774 120 782 113';
   const helloPath = new Path2D(HELLO);
+  const background=document.createElement('canvas');
   const canvas = $('canvas'), ctx = canvas.getContext('2d', {alpha:false});
   let state = {...defaults}, revision = 0, raf = 0, blobTimer, prepared = null, dialogURL = null, dialogFile = null;
   let tileKey = '', pattern = null, desktopURL = null;
@@ -17,9 +18,10 @@
     const result = {...defaults};
     for (const key of Object.keys(defaults)) {
       const value = raw?.[key];
-      if (limits[key]) { const n = Number(value); if (value !== '' && value != null && Number.isFinite(n)) result[key] = clamp(key==='dotSize'?Math.round(n*10)/10:Math.round(n),...limits[key]); }
+      if (limits[key]) { const n = Number(value); if (value !== '' && value != null && Number.isFinite(n)) result[key] = clamp(['dotSize','duration'].includes(key)?Math.round(n*10)/10:Math.round(n),...limits[key]); }
       else if (typeof defaults[key] === 'boolean') { if (typeof value === 'boolean') result[key] = value; }
       else if (key === 'text') { if(typeof value==='string') result[key] = value.slice(0,80); }
+      else if (['material','animation','videoFormat'].includes(key)) { const options={material:['solid','glass'],animation:['write','fade'],videoFormat:['auto','webm']};if(options[key].includes(value))result[key]=value; }
       else if (key === 'format') { if(value==='png'||value==='jpeg') result[key] = value; }
       else if (typeof value==='string' && /^#[0-9a-f]{6}$/i.test(value)) result[key] = value.toLowerCase();
     }
@@ -31,14 +33,20 @@
     if(full) for(const key of Object.keys(defaults)){ if(typeof defaults[key]==='boolean') $(key).checked=state[key]; else $(key).value=state[key]; }
     const preset = `${state.width}x${state.height}`;
     $('preset').value = [...$('preset').options].some(o=>o.value===preset)?preset:'custom';
-    document.querySelectorAll('output[for]').forEach(out=>{const key=String(out.htmlFor);out.textContent=String(state[key]).toUpperCase() + (key==='angle'?'°':['dotSize','spacing'].includes(key)?' px':limits[key]?'%':'');});
+    document.querySelectorAll('output[for]').forEach(out=>{const key=String(out.htmlFor);out.textContent=String(state[key]).toUpperCase() + (key==='duration'?' с':key==='angle'?'°':['dotSize','spacing'].includes(key)?' px':limits[key]?'%':'');});
     $('resolution').textContent=`${state.width} × ${state.height} px`;
+    $('quickGlass').setAttribute('aria-pressed',String(state.material==='glass'));
+    $('quickGlass').textContent=state.material==='glass'?'◆ Liquid Glass включён':'◇ Попробовать Liquid Glass';
+    $('glassSettings').hidden=state.material!=='glass';
+    $('motionHint').textContent=state.text.trim()==='hello'?'Надпись пишется одним движением и остаётся на экране.':'Для своего текста используется плавное появление.';
     $('quality').disabled=state.format!=='jpeg';
     $('stroke').disabled=state.text.trim()!=='hello';
     $('textHint').textContent=state.text.trim()==='hello'?'Apple / iPhone Hello · векторная надпись':'Фирменный стиль Apple Hello доступен только для слова «hello». Другой текст использует рукописный шрифт устройства.';
     $('export').textContent=`Экспортировать ${state.format==='png'?'PNG':'JPEG'}`;
     $('quickExport').textContent=`Сохранить ${state.format==='png'?'PNG':'JPEG'}`;
     document.querySelectorAll('[data-palette]').forEach((btn,i)=>btn.setAttribute('aria-pressed',String(state.bg1===palettes[i][1]&&state.bg2===palettes[i][2])));
+    updateVideoInfo();
+    $('timeline').value=100;$('playState').textContent='Финальный кадр';
     $('previewCanvas').setAttribute('aria-label',`Предпросмотр обоев ${state.width} на ${state.height} пикселей${state.showText&&state.text?`, надпись «${state.text}»`:''}`);
   }
   function rgb(hex) {return [1,3,5].map(i=>parseInt(hex.slice(i,i+2),16));}
@@ -67,18 +75,8 @@
         pattern=ctx.createPattern(tile,'repeat');pattern.setTransform(new DOMMatrix().scale(1/scale));tileKey=key;
       }
       ctx.globalAlpha=s.dotOpacity/100;ctx.fillStyle=pattern;ctx.fillRect(0,0,w,h);ctx.globalAlpha=1;
-      if(s.showText&&s.text.trim()){
-        ctx.save();ctx.translate(w*s.textX/100,h*s.textY/100);ctx.rotate(s.angle*Math.PI/180);ctx.globalAlpha=s.textOpacity/100;
-        if(s.text.trim()==='hello'){
-          const factor=w*s.textSize/100/806;
-          ctx.scale(factor,factor);ctx.translate(-400,-116);ctx.strokeStyle=s.textColor;ctx.lineWidth=15*s.stroke/100;ctx.lineCap='round';ctx.lineJoin='round';ctx.stroke(helloPath);
-        } else {
-          ctx.fillStyle=s.textColor;ctx.font='160px "Snell Roundhand", "Segoe Script", cursive';ctx.textAlign='center';ctx.textBaseline='middle';
-          const measure=Math.max(1,ctx.measureText(s.text).width),factor=Math.min(w*s.textSize/100/measure,h*.25/160);
-          ctx.scale(factor,factor);ctx.fillText(s.text,0,0);
-        }
-        ctx.restore();
-      }
+      background.width=w;background.height=h;background.getContext('2d').drawImage(canvas,0,0);
+      drawText(ctx,s,1,background);
       renderPreview();
       scheduleBlob();
     }catch(error){$('status').textContent='Не удалось отрисовать изображение. Уменьшите разрешение и попробуйте снова.';console.error(error);}
@@ -102,7 +100,7 @@
     if(source!==canvas){source.width=1;source.height=1;}
   }
   if(typeof ResizeObserver!=='undefined')new ResizeObserver(()=>renderPreview()).observe($('previewCanvas').parentElement);
-  function changed(save=true) { revision++;prepared=null;clearTimeout(blobTimer);updateUI();if(!raf)raf=requestAnimationFrame(render);if(save)persist(); }
+  function changed(save=true) { stopPreview(); revision++;prepared=null;clearTimeout(blobTimer);updateUI();if(!raf)raf=requestAnimationFrame(render);if(save)persist(); }
   function mime(){return state.format==='jpeg'?'image/jpeg':'image/png';}
   function filename(){return `hello-wallpaper-${state.width}x${state.height}.${state.format==='jpeg'?'jpg':'png'}`;}
   function makeBlob(){const type=mime(),quality=state.quality/100;return new Promise((resolve,reject)=>canvas.toBlob(blob=>blob?resolve(blob):reject(new Error('Браузер не смог создать файл. Попробуйте меньшее разрешение.')),type,quality));}
@@ -110,12 +108,13 @@
   // Prepare on mobile in advance, so navigator.share executes directly in the click's activation.
   function scheduleBlob(){clearTimeout(blobTimer);if(!isMobile())return;const v=revision;blobTimer=setTimeout(async()=>{try{const blob=await makeBlob();if(v===revision)prepared={revision:v,file:new File([blob],filename(),{type:blob.type})};}catch{}},450);}
   function canShare(file){try{return !!(navigator.share&&navigator.canShare&&navigator.canShare({files:[file]}));}catch{return false;}}
-  function releaseDialog(){if(dialogURL)URL.revokeObjectURL(dialogURL);dialogURL=null;dialogFile=null;$('savedImage').removeAttribute('src');}
-  function openSave(file){releaseDialog();dialogFile=file;dialogURL=URL.createObjectURL(file);$('savedImage').src=dialogURL;$('openImage').href=dialogURL;$('downloadImage').href=dialogURL;$('downloadImage').download=file.name;$('share').hidden=!canShare(file);if(!$('saveDialog').open)$('saveDialog').showModal();}
-  async function share(file){try{await navigator.share({files:[file],title:'Hello wallpaper'});$('status').textContent='Изображение передано в системное меню.';}catch(e){if(e.name!=='AbortError'){openSave(file);$('status').textContent='Выберите другой способ сохранения в открытом окне.';}}}
+  function releaseDialog(){if(dialogURL)URL.revokeObjectURL(dialogURL);dialogURL=null;dialogFile=null;$('savedImage').removeAttribute('src');$('savedVideo').pause();$('savedVideo').removeAttribute('src');$('savedVideo').load();}
+  function openSave(file){releaseDialog();dialogFile=file;dialogURL=URL.createObjectURL(file);const video=file.type.startsWith('video/');$('savedImage').hidden=video;$('savedVideo').hidden=!video;$(video?'savedVideo':'savedImage').src=dialogURL;$('saveHint').textContent=video?'Сохраните видео или передайте его в приложение для создания Live Photo.':'Сохраните изображение через системное меню или ссылку ниже.';$('openImage').textContent=video?'Открыть видео':'Открыть изображение';$('openImage').href=dialogURL;$('downloadImage').href=dialogURL;$('downloadImage').download=file.name;$('share').hidden=!canShare(file);if(!$('saveDialog').open)$('saveDialog').showModal();}
+  async function share(file){try{await navigator.share({files:[file],title:'Hello wallpaper'});$('status').textContent='Файл передан в системное меню.';}catch(e){if(e.name!=='AbortError'){openSave(file);$('status').textContent='Выберите другой способ сохранения в открытом окне.';}}}
   function download(file){if(desktopURL)URL.revokeObjectURL(desktopURL);desktopURL=URL.createObjectURL(file);const a=document.createElement('a');a.href=desktopURL;a.download=file.name;a.textContent=`Скачать ${file.name}`;$('status').textContent='Файл готов. Если загрузка не началась: ';$('status').append(a);a.click();}
   async function exportWallpaper(){
     if($('export').disabled)return;
+    stopPreview();
     // Capture current file synchronously; never await before a prepared Web Share call.
     if(isMobile()&&prepared?.revision===revision){const file=prepared.file;if(canShare(file))await share(file);else openSave(file);return;}
     const btn=$('export');btn.disabled=true;$('quickExport').disabled=true;$('status').textContent='Готовим изображение…';
@@ -140,5 +139,79 @@
   $('random').addEventListener('click',()=>{const h=Math.random()*360;state.bg1=hslToHex(h,38+Math.random()*16,68+Math.random()*10);state.bg2=hslToHex((h+8+Math.random()*18)%360,34+Math.random()*16,76+Math.random()*9);updateUI(true);changed();});
   palettes.forEach(([name,a,b],i)=>{const btn=document.createElement('button');btn.type='button';btn.className='swatch';btn.title=name;btn.setAttribute('aria-label',`Палитра ${name}`);btn.dataset.palette=i;btn.style.setProperty('--swatch',`linear-gradient(135deg,${a},${b})`);btn.addEventListener('click',()=>{state.bg1=a;state.bg2=b;updateUI(true);changed();});$('palettes').append(btn);});
   $('reset').addEventListener('click',()=>{state={...defaults};try{localStorage.removeItem(STORAGE_KEY);}catch{}updateUI(true);changed(false);$('status').textContent='Настройки сброшены.';});
+  // Sample the continuous cubic path by arc length: one pen stroke, never a loop.
+  const penPoints=[];
+  {const nums=HELLO.match(/-?\d+(?:\.\d+)?/g).map(Number);let x=nums[0],y=nums[1],distance=0;penPoints.push([x,y,0]);
+    for(let i=2;i<nums.length;i+=6){const [a,b,c,d,e,f]=nums.slice(i,i+6),ox=x,oy=y;
+      for(let j=1;j<=32;j++){const t=j/32,u=1-t,nx=u*u*u*ox+3*u*u*t*a+3*u*t*t*c+t*t*t*e,ny=u*u*u*oy+3*u*u*t*b+3*u*t*t*d+t*t*t*f;distance+=Math.hypot(nx-x,ny-y);penPoints.push([nx,ny,distance]);x=nx;y=ny;}
+    }
+  }
+  function partialHello(progress){if(progress>=1)return helloPath;const path=new Path2D(),end=penPoints.at(-1)[2]*progress;path.moveTo(...penPoints[0].slice(0,2));
+    for(let i=1;i<penPoints.length;i++){const p=penPoints[i],prev=penPoints[i-1];if(p[2]>end){const k=(end-prev[2])/(p[2]-prev[2]);path.lineTo(prev[0]+(p[0]-prev[0])*k,prev[1]+(p[1]-prev[1])*k);break;}path.lineTo(p[0],p[1]);}return path;
+  }
+  function surface(w,h){const c=document.createElement('canvas');c.width=Math.max(1,Math.ceil(w));c.height=Math.max(1,Math.ceil(h));return c;}
+  function drawText(target,s,progress=1,backdrop){
+    if(!s.showText||!s.text.trim()||progress<=0||s.textOpacity<=0)return;
+    const writing=s.text.trim()==='hello'&&s.animation==='write',alpha=s.textOpacity/100*(writing?1:progress),path=partialHello(writing?progress:1);
+    const hello=s.text.trim()==='hello',factor=s.width*s.textSize/100/806,angle=s.angle*Math.PI/180;
+    function shape(c,color){c.fillStyle=color;c.strokeStyle=color;c.lineCap='round';c.lineJoin='round';
+      if(hello){c.scale(factor,factor);c.translate(-400,-116);c.lineWidth=(s.material==='glass'?24:15)*s.stroke/100;c.stroke(path);}
+      else{c.font='160px "Snell Roundhand", "Segoe Script", cursive';c.textAlign='center';c.textBaseline='middle';const scale=Math.min(s.width*s.textSize/100/Math.max(1,c.measureText(s.text).width),s.height*.25/160);c.scale(scale,scale);c.fillText(s.text,0,0);}
+    }
+    target.save();target.globalAlpha=alpha;target.translate(s.width*s.textX/100,s.height*s.textY/100);target.rotate(angle);
+    if(s.material!=='glass'){shape(target,s.textColor);target.restore();return;}
+    // Render only the text bounds, keeping high-resolution exports within reasonable memory.
+    const pad=Math.max(12,factor*32),lw=Math.ceil(s.width*s.textSize/100+pad*2),lh=Math.ceil((hello?factor*245:s.height*.38)+pad*2);
+    const mask=surface(lw,lh),m=mask.getContext('2d');m.translate(lw/2,lh/2);shape(m,'#fff');
+    const glass=surface(lw,lh),g=glass.getContext('2d'),depth=s.glassDepth/100;
+    g.save();g.translate(lw/2,lh/2);g.scale(1+depth*.09,1+depth*.09);g.rotate(-angle);g.translate(-s.width*s.textX/100+depth*factor*5,-s.height*s.textY/100+depth*factor*4);g.drawImage(backdrop,0,0);g.restore();
+    g.globalCompositeOperation='destination-in';g.drawImage(mask,0,0);g.globalCompositeOperation='source-atop';
+    g.globalAlpha=.08+depth*.14;g.fillStyle=s.textColor;g.fillRect(0,0,lw,lh);g.globalAlpha=1;
+    const gleam=g.createLinearGradient(0,lh*.1,lw*.15,lh*.9);gleam.addColorStop(0,`rgba(255,255,255,${.38+depth*.2})`);gleam.addColorStop(.42,'rgba(255,255,255,.06)');gleam.addColorStop(.65,`rgba(4,35,70,${depth*.16})`);gleam.addColorStop(1,`rgba(220,255,255,${.3+depth*.15})`);g.fillStyle=gleam;g.fillRect(0,0,lw,lh);g.globalCompositeOperation='source-over';
+    const edge=surface(lw,lh),e=edge.getContext('2d'),bevel=Math.max(.7,factor*(1.5+depth*2.3));
+    function rim(dx,dy,color){e.clearRect(0,0,lw,lh);e.globalCompositeOperation='source-over';e.drawImage(mask,0,0);e.globalCompositeOperation='destination-out';e.drawImage(mask,dx,dy);e.globalCompositeOperation='source-in';e.fillStyle=color;e.fillRect(0,0,lw,lh);g.drawImage(edge,0,0);}
+    rim(-bevel,-bevel,`rgba(14,43,89,${.25+depth*.28})`);rim(bevel,bevel,`rgba(245,255,255,${.6+depth*.35})`);
+    target.shadowColor=`rgba(5,30,60,${depth*.3})`;target.shadowBlur=factor*(2+depth*4);target.shadowOffsetY=factor*(1+depth*3);target.drawImage(glass,-lw/2,-lh/2);target.restore();
+    mask.width=glass.width=edge.width=1;
+  }
+  let playing=0,previewStart=0,exporting=false,cancelRecording=null;
+  const totalDuration=()=>state.duration+.8;
+  function motionProgress(seconds,s=state){const t=clamp((seconds-.2)/s.duration,0,1);return t*t*(3-2*t);}
+  function stopPreview(){if(playing)cancelAnimationFrame(playing);playing=0;$('play').textContent='▶ Проиграть один раз';}
+  function motionFrame(seconds){const c=$('previewCanvas'),pc=c.getContext('2d');pc.globalAlpha=1;pc.drawImage(background,0,0,c.width,c.height);const s={...state,width:c.width,height:c.height};drawText(pc,s,motionProgress(seconds),c);$('timeline').value=Math.round(seconds/totalDuration()*100);$('playState').textContent=seconds>=totalDuration()?'Финальный кадр · без повтора':`${seconds.toFixed(1)} / ${totalDuration().toFixed(1)} с`;}
+  $('quickGlass').addEventListener('click',()=>{state.material=state.material==='glass'?'solid':'glass';updateUI(true);changed();});
+  $('play').addEventListener('click',()=>{if(exporting)return;if(playing){stopPreview();renderPreview();$('timeline').value=100;$('playState').textContent='Финальный кадр';return;}if(raf){cancelAnimationFrame(raf);render();}previewStart=performance.now();$('play').textContent='■ Остановить';const frame=now=>{const t=Math.min(totalDuration(),(now-previewStart)/1000);motionFrame(t);if(t<totalDuration())playing=requestAnimationFrame(frame);else stopPreview();};playing=requestAnimationFrame(frame);});
+  $('timeline').addEventListener('input',()=>{stopPreview();motionFrame(Number($('timeline').value)/100*totalDuration());});
+  function videoDimensions(s){const scale=Math.min(1,s.videoSize/Math.min(s.width,s.height),2560/Math.max(s.width,s.height));return {width:Math.max(2,Math.round(s.width*scale/2)*2),height:Math.max(2,Math.round(s.height*scale/2)*2)};}
+  function videoType(){if(typeof MediaRecorder==='undefined')return null;const choices=state.videoFormat==='webm'?['video/webm;codecs=vp9','video/webm;codecs=vp8','video/webm']:['video/mp4;codecs=avc1.42E01E','video/mp4','video/webm;codecs=vp9','video/webm;codecs=vp8','video/webm'];return choices.find(type=>MediaRecorder.isTypeSupported(type))||null;}
+  function updateVideoInfo(){const d=videoDimensions(state),type=videoType();$('videoInfo').textContent=type?`${d.width} × ${d.height} px · 30 кадров/с · ${totalDuration().toFixed(1)} с · ${type.includes('mp4')?'MP4':'WebM (MP4 недоступен в этом режиме)'}`:'Этот браузер не поддерживает запись видео. Попробуйте современный Safari, Chrome или Edge.';$('exportVideo').disabled=!type||!state.showText||!state.text.trim();}
+  // Record the same compositor used for PNG and preview. No third-party services or uploads.
+  async function exportVideo(){
+    if(exporting)return;const type=videoType();if(!type)return;stopPreview();if(raf)cancelAnimationFrame(raf);render();exporting=true;
+    const frozen={...state},dims=videoDimensions(frozen),duration=frozen.duration+.8,video=surface(dims.width,dims.height),v=video.getContext('2d',{alpha:false}),bg=surface(dims.width,dims.height);bg.getContext('2d').drawImage(background,0,0,dims.width,dims.height);
+    const s={...frozen,...dims},locks=[...document.querySelectorAll('input,select,button')].filter(el=>el.id!=='cancelVideo').map(el=>[el,el.disabled]);locks.forEach(([el])=>el.disabled=true);
+    $('cancelVideo').hidden=false;$('videoProgress').hidden=false;$('videoProgress').value=0;$('videoStatus').textContent='Записываем анимацию. Оставьте эту вкладку открытой…';
+    let stream,recorder,tick=0,watchdog;
+    try{
+      if(!video.captureStream)throw new Error('Запись canvas недоступна. Попробуйте другой браузер.');
+      v.drawImage(bg,0,0);stream=video.captureStream(30);recorder=new MediaRecorder(stream,{mimeType:type,videoBitsPerSecond:Math.min(20000000,dims.width*dims.height*5)});
+      const chunks=[];
+      const blob=await new Promise((resolve,reject)=>{
+        let cancelled=false,settled=false;const fail=error=>{if(settled)return;settled=true;cancelled=true;cancelAnimationFrame(tick);if(recorder.state!=='inactive')recorder.stop();reject(error);};
+        cancelRecording=()=>fail(new Error('Запись отменена. Настройки сохранены.'));
+        recorder.ondataavailable=e=>{if(e.data.size)chunks.push(e.data);};recorder.onerror=()=>fail(new Error('Браузер не смог записать видео. Выберите 480p или WebM и повторите.'));
+        recorder.onstop=()=>{if(cancelled||settled)return;settled=true;const result=new Blob(chunks,{type:recorder.mimeType||type});result.size?resolve(result):reject(new Error('Видео пустое. Попробуйте меньший размер.'));};
+        recorder.onstart=()=>{const start=performance.now();function frame(now){if(cancelled)return;const elapsed=(now-start)/1000;v.drawImage(bg,0,0);drawText(v,s,motionProgress(elapsed,s),bg);$('videoProgress').value=Math.round(Math.min(1,elapsed/duration)*100);if(elapsed<duration)tick=requestAnimationFrame(frame);else recorder.stop();}tick=requestAnimationFrame(frame);};
+        watchdog=setTimeout(()=>fail(new Error('Запись прервана по времени. Снизьте размер видео и повторите.')),(duration+20)*1000);recorder.start();
+      });
+      const ext=blob.type.includes('mp4')?'mp4':'webm',file=new File([blob],`hello-live-${dims.width}x${dims.height}.${ext}`,{type:blob.type});
+      if(isMobile())openSave(file);else download(file);
+      $('videoStatus').textContent=`Готово: ${ext.toUpperCase()}, ${dims.width} × ${dims.height}. Одно появление, финальный кадр удерживается.`;
+    }catch(e){$('videoStatus').textContent=e.message;}
+    finally{clearTimeout(watchdog);cancelAnimationFrame(tick);if(recorder&&recorder.state!=='inactive')recorder.stop();stream?.getTracks().forEach(track=>track.stop());video.width=bg.width=1;exporting=false;cancelRecording=null;locks.forEach(([el,disabled])=>el.disabled=disabled);$('cancelVideo').hidden=true;$('videoProgress').hidden=true;renderPreview();updateVideoInfo();}
+  }
+  $('exportVideo').addEventListener('click',exportVideo);$('cancelVideo').addEventListener('click',()=>cancelRecording?.());
+  document.addEventListener('visibilitychange',()=>{if(document.hidden){stopPreview();cancelRecording?.();}});
+
   updateUI(true);render();
 })();
