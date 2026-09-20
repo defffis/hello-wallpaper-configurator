@@ -40,8 +40,8 @@
     $('glassSettings').hidden=state.material!=='glass';
     $('motionHint').textContent=state.text.trim()!=='hello'?'Для своего текста используется плавное появление.':state.animation==='write'?'Надпись пишется одним движением и остаётся на экране.':'Надпись плавно проявляется и остаётся на экране.';
     $('wallpaperShell').style.setProperty('--wallpaper-aspect',state.width/state.height);
-    $('wallpaperShell').style.setProperty('--preview-width',state.width>state.height?'100%':'58%');
-    $('wallpaperShell').style.setProperty('--preview-max',state.width>state.height?'580px':'235px');
+    $('wallpaperShell').style.setProperty('--preview-width',state.width>state.height?'100%':'78%');
+    $('wallpaperShell').style.setProperty('--preview-max',state.width>state.height?'720px':'420px');
     $('quality').disabled=state.format!=='jpeg';
     $('stroke').disabled=state.text.trim()!=='hello';
     $('textHint').textContent=state.text.trim()==='hello'?'Apple / iPhone Hello · векторная надпись':'Фирменный стиль Apple Hello доступен только для слова «hello». Другой текст использует рукописный шрифт устройства.';
@@ -101,6 +101,18 @@
     preview.width=width;preview.height=height;
     const pc=preview.getContext('2d');pc.imageSmoothingEnabled=true;pc.imageSmoothingQuality='high';pc.drawImage(source,0,0,width,height);
     if(source!==canvas){source.width=1;source.height=1;}
+    renderZoom();
+  }
+  function renderZoom(){
+    const dialog=$('previewDialog'),zoom=$('zoomCanvas');
+    if(!dialog?.open||!zoom||!canvas.width||!canvas.height)return;
+    const aspect=canvas.width/canvas.height,maxW=Math.min((window.innerWidth||1220)*.9,1100),maxH=Math.min((window.innerHeight||1040)*.74,820);
+    let cssW=Math.min(maxW,maxH*aspect),cssH=cssW/aspect;
+    if(cssH>maxH){cssH=maxH;cssW=cssH*aspect;}
+    const dpr=Math.min(window.devicePixelRatio||1,2),w=Math.max(1,Math.round(cssW*dpr)),h=Math.max(1,Math.round(cssH*dpr));
+    if(zoom.width!==w)zoom.width=w;if(zoom.height!==h)zoom.height=h;
+    zoom.style.width=`${Math.round(cssW)}px`;zoom.style.height=`${Math.round(cssH)}px`;
+    const z=zoom.getContext('2d');z.imageSmoothingEnabled=true;z.imageSmoothingQuality='high';z.clearRect(0,0,w,h);z.drawImage(canvas,0,0,w,h);
   }
   if(typeof ResizeObserver!=='undefined')new ResizeObserver(()=>renderPreview()).observe($('previewCanvas').parentElement);
   function changed(save=true) { stopPreview(); revision++;prepared=null;clearTimeout(blobTimer);updateUI();if(!raf)raf=requestAnimationFrame(render);if(save)persist(); }
@@ -183,17 +195,28 @@
   function stopPreview(){if(playing)cancelAnimationFrame(playing);playing=0;$('play').textContent='▶ Проиграть один раз';}
   function motionFrame(seconds){const c=$('previewCanvas'),pc=c.getContext('2d');pc.globalAlpha=1;pc.drawImage(background,0,0,c.width,c.height);const s={...state,width:c.width,height:c.height};drawText(pc,s,motionProgress(seconds),c);$('timeline').value=Math.round(seconds/totalDuration()*100);$('playState').textContent=seconds>=totalDuration()?'Финальный кадр · без повтора':`${seconds.toFixed(1)} / ${totalDuration().toFixed(1)} с`;}
   $('quickGlass').addEventListener('click',()=>{state.material=state.material==='glass'?'solid':'glass';updateUI(true);changed();});
+  $('zoomPreview').addEventListener('click',()=>{if(!$('previewDialog').open)$('previewDialog').showModal();renderZoom();});
+  $('closePreview').addEventListener('click',()=>$('previewDialog').close());
+  $('previewDialog').addEventListener('click',event=>{if(event.target===$('previewDialog'))$('previewDialog').close();});
+  window.addEventListener?.('resize',renderZoom,{passive:true});
   $('play').addEventListener('click',()=>{if(exporting)return;if(playing){stopPreview();renderPreview();$('timeline').value=100;$('playState').textContent='Финальный кадр';return;}if(raf){cancelAnimationFrame(raf);render();}previewStart=performance.now();$('play').textContent='■ Остановить';const frame=now=>{const t=Math.min(totalDuration(),(now-previewStart)/1000);motionFrame(t);if(t<totalDuration())playing=requestAnimationFrame(frame);else stopPreview();};playing=requestAnimationFrame(frame);});
   $('timeline').addEventListener('input',()=>{stopPreview();motionFrame(Number($('timeline').value)/100*totalDuration());});
   function videoDimensions(s){const scale=Math.min(1,s.videoSize/Math.min(s.width,s.height),2560/Math.max(s.width,s.height));return {width:Math.max(2,Math.round(s.width*scale/2)*2),height:Math.max(2,Math.round(s.height*scale/2)*2)};}
-  function videoType(){if(typeof MediaRecorder==='undefined')return null;const choices=state.videoFormat==='webm'?['video/webm;codecs=vp9','video/webm;codecs=vp8','video/webm']:['video/mp4;codecs=avc1.42E01E','video/mp4','video/webm;codecs=vp9','video/webm;codecs=vp8','video/webm'];return choices.find(type=>MediaRecorder.isTypeSupported(type))||null;}
-  function updateVideoInfo(){const d=videoDimensions(state),type=videoType();$('videoInfo').textContent=type?`${d.width} × ${d.height} px · до 30 кадров/с · ≈${totalDuration().toFixed(1)} с · ${type.includes('mp4')?'MP4':'WebM (MP4 недоступен в этом режиме)'}`:'Этот браузер не поддерживает запись видео. Попробуйте современный Safari, Chrome или Edge.';$('exportVideo').disabled=!type||!state.showText||!state.text.trim();}
-  // Record the same compositor used for PNG and preview. No third-party services or uploads.
-  async function exportVideo(){
-    if(exporting)return;const type=videoType();if(!type)return;stopPreview();if(raf)cancelAnimationFrame(raf);render();exporting=true;
+  function firstSupported(types){if(typeof MediaRecorder==='undefined')return null;return types.find(type=>MediaRecorder.isTypeSupported(type))||null;}
+  function mp4Type(){return firstSupported(['video/mp4;codecs=avc1.42E01E','video/mp4']);}
+  function videoType(){return state.videoFormat==='webm'?firstSupported(['video/webm;codecs=vp9','video/webm;codecs=vp8','video/webm']):firstSupported(['video/mp4;codecs=avc1.42E01E','video/mp4','video/webm;codecs=vp9','video/webm;codecs=vp8','video/webm']);}
+  function updateVideoInfo(){
+    const d=videoDimensions(state),type=videoType(),nativeType=mp4Type();
+    $('videoInfo').textContent=type?`${d.width} × ${d.height} px · до 30 кадров/с · ≈${totalDuration().toFixed(1)} с · ${type.includes('mp4')?'MP4':'WebM (MP4 недоступен в этом режиме)'}`:'Этот браузер не поддерживает запись видео. Попробуйте современный Safari, Chrome или Edge.';
+    $('exportVideo').disabled=!type||!state.showText||!state.text.trim();
+    $('exportLivePhoto').disabled=!nativeType||!state.showText||!state.text.trim();
+    $('livePhotoHint').textContent=nativeType?'JPG и MOV получают одинаковый Apple Content Identifier. На iPhone пара передаётся напрямую через «Поделиться», на компьютере — ZIP. Совместимость с экраном блокировки зависит от версии iOS.':'Для Live Photo нужен браузер, который умеет записывать H.264/MP4 (обычно Safari, новый Chrome или Edge).';
+  }
+  async function recordAnimation(type,message='Записываем анимацию. Оставьте эту вкладку открытой…'){
+    stopPreview();if(raf)cancelAnimationFrame(raf);render();
     const frozen={...state},dims=videoDimensions(frozen),duration=frozen.duration+.8,video=surface(dims.width,dims.height),v=video.getContext('2d',{alpha:false}),bg=surface(dims.width,dims.height);bg.getContext('2d').drawImage(background,0,0,dims.width,dims.height);
     const s={...frozen,...dims},locks=[...document.querySelectorAll('input,select,button')].filter(el=>el.id!=='cancelVideo').map(el=>[el,el.disabled]);locks.forEach(([el])=>el.disabled=true);
-    $('cancelVideo').hidden=false;$('videoProgress').hidden=false;$('videoProgress').value=0;$('videoStatus').textContent='Записываем анимацию. Оставьте эту вкладку открытой…';
+    $('cancelVideo').hidden=false;$('videoProgress').hidden=false;$('videoProgress').value=0;$('videoStatus').textContent=message;
     let stream,recorder,tick=0,watchdog;
     try{
       if(!video.captureStream)throw new Error('Запись canvas недоступна. Попробуйте другой браузер.');
@@ -204,16 +227,97 @@
         cancelRecording=()=>fail(new Error('Запись отменена. Настройки сохранены.'));
         recorder.ondataavailable=e=>{if(e.data.size)chunks.push(e.data);};recorder.onerror=()=>fail(new Error('Браузер не смог записать видео. Выберите 480p или WebM и повторите.'));
         recorder.onstop=()=>{if(cancelled||settled)return;settled=true;const result=new Blob(chunks,{type:recorder.mimeType||type});result.size?resolve(result):reject(new Error('Видео пустое. Попробуйте меньший размер.'));};
-        recorder.onstart=()=>{const start=performance.now();function frame(now){if(cancelled)return;const elapsed=(now-start)/1000;v.drawImage(bg,0,0);drawText(v,s,motionProgress(elapsed,s),bg);$('videoProgress').value=Math.round(Math.min(1,elapsed/duration)*100);if(elapsed<duration)tick=requestAnimationFrame(frame);else recorder.stop();}tick=requestAnimationFrame(frame);};
+        recorder.onstart=()=>{const started=performance.now();function frame(now){if(cancelled)return;const elapsed=(now-started)/1000;v.drawImage(bg,0,0);drawText(v,s,motionProgress(elapsed,s),bg);$('videoProgress').value=Math.round(Math.min(1,elapsed/duration)*100);if(elapsed<duration)tick=requestAnimationFrame(frame);else recorder.stop();}tick=requestAnimationFrame(frame);};
         watchdog=setTimeout(()=>fail(new Error('Запись прервана по времени. Снизьте размер видео и повторите.')),(duration+20)*1000);recorder.start();
       });
-      const ext=blob.type.includes('mp4')?'mp4':'webm',file=new File([blob],`hello-live-${dims.width}x${dims.height}.${ext}`,{type:blob.type});
+      return {blob,dims,frozen};
+    }finally{
+      clearTimeout(watchdog);cancelAnimationFrame(tick);if(recorder&&recorder.state!=='inactive')recorder.stop();stream?.getTracks().forEach(track=>track.stop());video.width=bg.width=1;cancelRecording=null;locks.forEach(([el,disabled])=>el.disabled=disabled);$('cancelVideo').hidden=true;$('videoProgress').hidden=true;renderPreview();
+    }
+  }
+  async function exportVideo(){
+    if(exporting)return;const type=videoType();if(!type)return;exporting=true;
+    try{
+      const {blob,dims}=await recordAnimation(type),ext=blob.type.includes('mp4')?'mp4':'webm',file=new File([blob],`hello-live-${dims.width}x${dims.height}.${ext}`,{type:blob.type});
       if(isMobile())openSave(file);else download(file);
       $('videoStatus').textContent=`Готово: ${ext.toUpperCase()}, ${dims.width} × ${dims.height}. Одно появление, финальный кадр удерживается.`;
     }catch(e){$('videoStatus').textContent=e.message;}
-    finally{clearTimeout(watchdog);cancelAnimationFrame(tick);if(recorder&&recorder.state!=='inactive')recorder.stop();stream?.getTracks().forEach(track=>track.stop());video.width=bg.width=1;exporting=false;cancelRecording=null;locks.forEach(([el,disabled])=>el.disabled=disabled);$('cancelVideo').hidden=true;$('videoProgress').hidden=true;renderPreview();updateVideoInfo();}
+    finally{exporting=false;updateVideoInfo();}
   }
-  $('exportVideo').addEventListener('click',exportVideo);$('cancelVideo').addEventListener('click',()=>cancelRecording?.());
+  const enc={encode:s=>Uint8Array.from(s,c=>c.charCodeAt(0)&255)};
+  const bytes=(...parts)=>{const size=parts.reduce((n,p)=>n+p.length,0),out=new Uint8Array(size);let at=0;for(const p of parts){out.set(p,at);at+=p.length;}return out;};
+  const be16=n=>Uint8Array.of((n>>>8)&255,n&255);
+  const be32=n=>Uint8Array.of((n>>>24)&255,(n>>>16)&255,(n>>>8)&255,n&255);
+  function qtBox(type,payload){const t=typeof type==='string'?enc.encode(type):type;return bytes(be32(payload.length+8),t,payload);}
+  function jpegWithContentIdentifier(blob,identifier){
+    return blob.arrayBuffer().then(buffer=>{
+      const src=new Uint8Array(buffer);if(src[0]!==0xff||src[1]!==0xd8)throw new Error('Не удалось подготовить JPEG для Live Photo.');
+      const id=enc.encode(identifier+'\0'),valueOffset=32,maker=bytes(enc.encode('Apple iOS\0'),Uint8Array.of(0,1),enc.encode('MM'),be16(1),be16(0x0011),be16(2),be32(id.length),be32(valueOffset),be32(0),id);
+      const exifIfdOffset=26,makerOffset=44,tiff=bytes(enc.encode('MM'),be16(0x002a),be32(8),be16(1),be16(0x8769),be16(4),be32(1),be32(exifIfdOffset),be32(0),be16(1),be16(0x927c),be16(7),be32(maker.length),be32(makerOffset),be32(0),maker);
+      const payload=bytes(enc.encode('Exif\0\0'),tiff),segment=bytes(Uint8Array.of(0xff,0xe1),be16(payload.length+2),payload);
+      return new Blob([src.slice(0,2),segment,src.slice(2)],{type:'image/jpeg'});
+    });
+  }
+  function movieMeta(identifier){
+    const key=enc.encode('com.apple.quicktime.content.identifier'),keyEntry=bytes(be32(key.length+8),enc.encode('mdta'),key);
+    const keys=qtBox('keys',bytes(be32(0),be32(1),keyEntry)),data=qtBox('data',bytes(be32(1),be32(0),enc.encode(identifier))),item=qtBox(Uint8Array.of(0,0,0,1),data),ilst=qtBox('ilst',item);
+    const hdlr=qtBox('hdlr',bytes(be32(0),be32(0),enc.encode('mdta'),new Uint8Array(12))),meta=qtBox('meta',bytes(be32(0),hdlr,keys,ilst));
+    return qtBox('udta',meta);
+  }
+  function readU32(view,at){return view.getUint32(at,false);}
+  function findTopBox(data,type){
+    const view=new DataView(data.buffer,data.byteOffset,data.byteLength);let at=0;
+    while(at+8<=data.length){let size=readU32(view,at),header=8;if(size===1){if(at+16>data.length)return null;const big=view.getBigUint64(at+8,false);if(big>BigInt(Number.MAX_SAFE_INTEGER))return null;size=Number(big);header=16;}else if(size===0)size=data.length-at;
+      if(size<header||at+size>data.length)return null;
+      if(String.fromCharCode(...data.slice(at+4,at+8))===type)return {at,size,header,end:at+size};
+      at+=size;
+    }return null;
+  }
+  function patchChunkOffsets(data,moov,delta){
+    const view=new DataView(data.buffer,data.byteOffset,data.byteLength),types=['stco','co64'];
+    for(let pos=moov.at+moov.header+4;pos+12<moov.end;pos++){
+      const type=String.fromCharCode(...data.slice(pos,pos+4));if(!types.includes(type))continue;
+      const boxAt=pos-4,size=readU32(view,boxAt);if(size<16||boxAt+size>moov.end)continue;
+      const count=readU32(view,pos+8),step=type==='stco'?4:8,first=pos+12;if(first+count*step>boxAt+size)continue;
+      for(let n=0;n<count;n++){const p=first+n*step;if(type==='stco'){const value=readU32(view,p);if(value>=moov.end)view.setUint32(p,value+delta,false);}else{const value=view.getBigUint64(p,false);if(value>=BigInt(moov.end))view.setBigUint64(p,value+BigInt(delta),false);}}
+      pos=boxAt+size-1;
+    }
+  }
+  async function movWithContentIdentifier(blob,identifier){
+    const src=new Uint8Array(await blob.arrayBuffer()),moov=findTopBox(src,'moov');if(!moov)throw new Error('Не удалось найти структуру MOV/MP4 для Live Photo.');
+    const meta=movieMeta(identifier),copy=src.slice();patchChunkOffsets(copy,moov,meta.length);
+    const view=new DataView(copy.buffer,copy.byteOffset,copy.byteLength);
+    if(readU32(view,moov.at)===1)view.setBigUint64(moov.at+8,BigInt(moov.size+meta.length),false);else view.setUint32(moov.at,moov.size+meta.length,false);
+    return new Blob([copy.slice(0,moov.end),meta,copy.slice(moov.end)],{type:'video/quicktime'});
+  }
+  let crcTable=null;
+  function crc32(data){if(!crcTable){crcTable=new Uint32Array(256);for(let n=0;n<256;n++){let c=n;for(let k=0;k<8;k++)c=(c&1)?0xedb88320^(c>>>1):c>>>1;crcTable[n]=c>>>0;}}let c=0xffffffff;for(const b of data)c=crcTable[(c^b)&255]^(c>>>8);return (c^0xffffffff)>>>0;}
+  async function zipFiles(files){
+    const locals=[],centrals=[];let offset=0,centralSize=0;const now=new Date(),dosTime=(now.getHours()<<11)|(now.getMinutes()<<5)|(now.getSeconds()>>1),dosDate=((now.getFullYear()-1980)<<9)|((now.getMonth()+1)<<5)|now.getDate();
+    for(const file of files){const data=new Uint8Array(await file.arrayBuffer()),name=enc.encode(file.name),crc=crc32(data),local=new Uint8Array(30+name.length),lv=new DataView(local.buffer);lv.setUint32(0,0x04034b50,true);lv.setUint16(4,20,true);lv.setUint16(6,0x0800,true);lv.setUint16(8,0,true);lv.setUint16(10,dosTime,true);lv.setUint16(12,dosDate,true);lv.setUint32(14,crc,true);lv.setUint32(18,data.length,true);lv.setUint32(22,data.length,true);lv.setUint16(26,name.length,true);local.set(name,30);locals.push(local,data);
+      const central=new Uint8Array(46+name.length),cv=new DataView(central.buffer);cv.setUint32(0,0x02014b50,true);cv.setUint16(4,20,true);cv.setUint16(6,20,true);cv.setUint16(8,0x0800,true);cv.setUint16(10,0,true);cv.setUint16(12,dosTime,true);cv.setUint16(14,dosDate,true);cv.setUint32(16,crc,true);cv.setUint32(20,data.length,true);cv.setUint32(24,data.length,true);cv.setUint16(28,name.length,true);cv.setUint32(42,offset,true);central.set(name,46);centrals.push(central);offset+=local.length+data.length;centralSize+=central.length;}
+    const end=new Uint8Array(22),ev=new DataView(end.buffer);ev.setUint32(0,0x06054b50,true);ev.setUint16(8,files.length,true);ev.setUint16(10,files.length,true);ev.setUint32(12,centralSize,true);ev.setUint32(16,offset,true);
+    return new Blob([...locals,...centrals,end],{type:'application/zip'});
+  }
+  function uuid(){return (globalThis.crypto?.randomUUID?.()||'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g,c=>{const r=Math.random()*16|0,v=c==='x'?r:(r&3|8);return v.toString(16);})).toUpperCase();}
+  async function exportLivePhoto(){
+    if(exporting)return;const type=mp4Type();if(!type){$('videoStatus').textContent='Live Photo требует MP4/H.264. Откройте сайт в Safari, новом Chrome или Edge.';return;}exporting=true;
+    try{
+      const {blob:rawVideo,dims,frozen}=await recordAnimation(type,'Готовим Live Photo: записываем анимацию…');
+      if(raf)cancelAnimationFrame(raf);render();
+      const stillRaw=await new Promise((resolve,reject)=>canvas.toBlob(b=>b?resolve(b):reject(new Error('Не удалось создать ключевой кадр.')),'image/jpeg',.95));
+      const identifier=uuid(),still=await jpegWithContentIdentifier(stillRaw,identifier),movie=await movWithContentIdentifier(rawVideo,identifier),base=`LIVE_${identifier.replaceAll('-','').slice(0,12)}`,stillTime=Number((frozen.duration+.2).toFixed(3));
+      const photoFile=new File([still],base+'.JPG',{type:'image/jpeg'}),movieFile=new File([movie],base+'.MOV',{type:'video/quicktime'}),manifest=new File([JSON.stringify({format:'Apple Live Photo pair (browser beta)',contentIdentifier:identifier,photo:photoFile.name,video:movieFile.name,stillImageTimeSeconds:stillTime,photoMetadata:'Apple MakerNote 0x0011',movieMetadata:'com.apple.quicktime.content.identifier',timedStillImageMetadataTrack:false,width:dims.width,height:dims.height},null,2)],'live-photo.json',{type:'application/json'}),note=new File(['Live Photo browser beta\n\nJPG and MOV contain the same Apple Content Identifier. The MOV is generated by MediaRecorder; a dedicated com.apple.quicktime.still-image-time timed metadata track is not added by the browser. Newer Apple Photos versions may still pair the files, but Lock Screen eligibility is not guaranteed.\n\nOn iPhone, use Share → Save to Photos for both files together. If they appear separately, use the MOV in a Live Photo converter.'],'README.txt',{type:'text/plain'});
+      const pair=[photoFile,movieFile];
+      if(isMobile()&&navigator.share&&navigator.canShare&&navigator.canShare({files:pair})){
+        try{await navigator.share({files:pair,title:'Hello Live Photo'});$('videoStatus').textContent='Пара JPG + MOV передана в системное меню. Сохраните оба файла в «Фото» одновременно.';return;}catch(e){if(e.name==='AbortError'){$('videoStatus').textContent='Экспорт Live Photo отменён.';return;}}
+      }
+      const archive=await zipFiles([photoFile,movieFile,manifest,note]),zip=new File([archive],`hello-live-photo-${dims.width}x${dims.height}.zip`,{type:'application/zip'});download(zip);
+      $('videoStatus').textContent='Live Photo-пакет готов: JPG + MOV имеют общий Apple Content Identifier. ZIP также содержит технический manifest и инструкцию.';
+    }catch(e){$('videoStatus').textContent=e.message;}
+    finally{exporting=false;updateVideoInfo();}
+  }
+  $('exportVideo').addEventListener('click',exportVideo);$('exportLivePhoto').addEventListener('click',exportLivePhoto);$('cancelVideo').addEventListener('click',()=>cancelRecording?.());
   document.addEventListener('visibilitychange',()=>{if(document.hidden){stopPreview();cancelRecording?.();}});
 
   updateUI(true);render();
