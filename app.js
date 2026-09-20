@@ -248,6 +248,7 @@
   const bytes=(...parts)=>{const size=parts.reduce((n,p)=>n+p.length,0),out=new Uint8Array(size);let at=0;for(const p of parts){out.set(p,at);at+=p.length;}return out;};
   const be16=n=>Uint8Array.of((n>>>8)&255,n&255);
   const be32=n=>Uint8Array.of((n>>>24)&255,(n>>>16)&255,(n>>>8)&255,n&255);
+  const readU32=(view,at)=>view.getUint32(at,false);
   function qtBox(type,payload){const t=typeof type==='string'?enc.encode(type):type;return bytes(be32(payload.length+8),t,payload);}
   function jpegWithContentIdentifier(blob,identifier){
     return blob.arrayBuffer().then(buffer=>{
