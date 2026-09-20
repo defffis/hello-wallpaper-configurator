@@ -210,7 +210,7 @@
     $('videoInfo').textContent=type?`${d.width} × ${d.height} px · до 30 кадров/с · ≈${totalDuration().toFixed(1)} с · ${type.includes('mp4')?'MP4':'WebM (MP4 недоступен в этом режиме)'}`:'Этот браузер не поддерживает запись видео. Попробуйте современный Safari, Chrome или Edge.';
     $('exportVideo').disabled=!type||!state.showText||!state.text.trim();
     $('exportLivePhoto').disabled=!nativeType||!state.showText||!state.text.trim();
-    $('livePhotoHint').textContent=nativeType?'JPG и MOV получают одинаковый Apple Content Identifier. На iPhone пара передаётся напрямую через «Поделиться», на компьютере — ZIP. Совместимость с экраном блокировки зависит от версии iOS.':'Для Live Photo нужен браузер, который умеет записывать H.264/MP4 (обычно Safari, новый Chrome или Edge).';
+    $('livePhotoHint').textContent=nativeType?'Создаётся .livp: JPG + MOV с общим Content Identifier и timed metadata track still-image-time. На iPhone сохраняйте пакет в «Файлы»/совместимое приложение — Safari не может создать единый PHAsset в «Фото».':'Для Live Photo нужен браузер, который умеет записывать H.264/MP4 (обычно Safari, новый Chrome или Edge).';
   }
   async function recordAnimation(type,message='Записываем анимацию. Оставьте эту вкладку открытой…'){
     stopPreview();if(raf)cancelAnimationFrame(raf);render();
@@ -258,37 +258,68 @@
       return new Blob([src.slice(0,2),segment,src.slice(2)],{type:'image/jpeg'});
     });
   }
+  const hexBytes=hex=>Uint8Array.from(hex.match(/../g)||[],part=>parseInt(part,16));
+  const fullBox=(version=0,flags=0)=>Uint8Array.of(version,(flags>>>16)&255,(flags>>>8)&255,flags&255);
+  const unityMatrix=hexBytes('000100000000000000000000000000000001000000000000000000000000000040000000');
   function movieMeta(identifier){
-    const key=enc.encode('com.apple.quicktime.content.identifier'),keyEntry=bytes(be32(key.length+8),enc.encode('mdta'),key);
-    const keys=qtBox('keys',bytes(be32(0),be32(1),keyEntry)),data=qtBox('data',bytes(be32(1),be32(0),enc.encode(identifier))),item=qtBox(Uint8Array.of(0,0,0,1),data),ilst=qtBox('ilst',item);
-    const hdlr=qtBox('hdlr',bytes(be32(0),be32(0),enc.encode('mdta'),new Uint8Array(12))),meta=qtBox('meta',bytes(be32(0),hdlr,keys,ilst));
-    return qtBox('udta',meta);
+    const hdlr=hexBytes('0000002268646c7200000000000000006d6474610000000000000000000000000000'),key=enc.encode('com.apple.quicktime.content.identifier');
+    const entry=bytes(be32(4+4+key.length),enc.encode('mdta'),key),keys=qtBox('keys',bytes(fullBox(),be32(1),entry));
+    const data=qtBox('data',bytes(be32(1),be32(0),enc.encode(identifier))),item=qtBox(Uint8Array.of(0,0,0,1),data),ilst=qtBox('ilst',item);
+    return qtBox('meta',bytes(hdlr,keys,ilst));
   }
-  function readU32(view,at){return view.getUint32(at,false);}
-  function findTopBox(data,type){
-    const view=new DataView(data.buffer,data.byteOffset,data.byteLength);let at=0;
-    while(at+8<=data.length){let size=readU32(view,at),header=8;if(size===1){if(at+16>data.length)return null;const big=view.getBigUint64(at+8,false);if(big>BigInt(Number.MAX_SAFE_INTEGER))return null;size=Number(big);header=16;}else if(size===0)size=data.length-at;
-      if(size<header||at+size>data.length)return null;
-      if(String.fromCharCode(...data.slice(at+4,at+8))===type)return {at,size,header,end:at+size};
-      at+=size;
-    }return null;
+  function boxType(data,at){return String.fromCharCode(...data.slice(at+4,at+8));}
+  function readBox(data,at,end=data.length){
+    if(at+8>end)return null;const view=new DataView(data.buffer,data.byteOffset,data.byteLength);let size=readU32(view,at),header=8;
+    if(size===1){if(at+16>end)return null;const big=view.getBigUint64(at+8,false);if(big>BigInt(Number.MAX_SAFE_INTEGER))return null;size=Number(big);header=16;}else if(size===0)size=end-at;
+    if(size<header||at+size>end)return null;return {at,size,header,end:at+size,type:boxType(data,at)};
+  }
+  function childBoxes(data,start,end){const out=[];for(let at=start;at+8<=end;){const b=readBox(data,at,end);if(!b)break;out.push(b);at=b.end;}return out;}
+  function findTopBox(data,type){for(const b of childBoxes(data,0,data.length))if(b.type===type)return b;return null;}
+  function movieInfo(data,moov){
+    const view=new DataView(data.buffer,data.byteOffset,data.byteLength),children=childBoxes(data,moov.at+moov.header,moov.end),mvhd=children.find(b=>b.type==='mvhd');
+    if(!mvhd)throw new Error('В MP4 отсутствует mvhd.');
+    const version=data[mvhd.at+8],timescale=readU32(view,mvhd.at+(version===1?28:20));if(!timescale)throw new Error('Некорректный timescale MP4.');
+    let maxTrackId=0;
+    for(const trak of children.filter(b=>b.type==='trak')){const tkhd=childBoxes(data,trak.at+trak.header,trak.end).find(b=>b.type==='tkhd');if(!tkhd)continue;const v=data[tkhd.at+8],id=readU32(view,tkhd.at+(v===1?28:20));maxTrackId=Math.max(maxTrackId,id);}
+    return {mvhd,timescale,trackId:maxTrackId+1};
+  }
+  function stillImageTrack(trackId,movieTimescale,stillTimeSeconds,sampleOffset){
+    const metadataTimescale=600,stillMovie=Math.max(0,Math.round(stillTimeSeconds*movieTimescale)),segment=Math.max(1,Math.round(movieTimescale/metadataTimescale)),trackDuration=stillMovie+segment;
+    const tkhd=qtBox('tkhd',bytes(fullBox(0,0x0f),be32(0),be32(0),be32(trackId),be32(0),be32(trackDuration),new Uint8Array(8),be16(0),be16(0),be16(0),be16(0),unityMatrix,be32(0),be32(0)));
+    const elst=qtBox('elst',bytes(fullBox(),be32(2),be32(stillMovie),be32(0xffffffff),be16(1),be16(0),be32(segment),be32(0),be16(1),be16(0))),edts=qtBox('edts',elst);
+    const mdhd=qtBox('mdhd',bytes(fullBox(),be32(0),be32(0),be32(metadataTimescale),be32(1),be16(0x55c4),be16(0)));
+    const hdlrMeta=hexBytes('0000003468646c72000000006d686c726d6574616170706c000000010000000013436f7265204d65646961204d65746164617461');
+    const gmhd=hexBytes('00000020676d686400000018676d696e00000000004080008000800000000000');
+    const hdlrData=hexBytes('0000003868646c720000000064686c72616c69736170706c000000000000000017436f7265204d6564696120446174612048616e646c6572');
+    const dinf=hexBytes('0000002464696e660000001c6472656600000000000000010000000c616c697300000001');
+    const keyd=qtBox('keyd',bytes(enc.encode('mdta'),enc.encode('com.apple.quicktime.still-image-time'))),dtyp=qtBox('dtyp',bytes(be32(0),be32(0x41)));
+    const keyEntry=bytes(be32(8+keyd.length+dtyp.length),be32(1),keyd,dtyp),keys=qtBox('keys',keyEntry);
+    const mebx=bytes(be32(8+8+keys.length),enc.encode('mebx'),new Uint8Array(6),be16(1),keys);
+    const stsd=qtBox('stsd',bytes(fullBox(),be32(1),mebx)),stts=qtBox('stts',bytes(fullBox(),be32(1),be32(1),be32(1)));
+    const stsc=qtBox('stsc',bytes(fullBox(),be32(1),be32(1),be32(1),be32(1))),stsz=qtBox('stsz',bytes(fullBox(),be32(9),be32(1))),stco=qtBox('stco',bytes(fullBox(),be32(1),be32(sampleOffset)));
+    const stbl=qtBox('stbl',bytes(stsd,stts,stsc,stsz,stco)),minf=qtBox('minf',bytes(gmhd,hdlrData,dinf,stbl)),mdia=qtBox('mdia',bytes(mdhd,hdlrMeta,minf));
+    return qtBox('trak',bytes(tkhd,edts,mdia));
   }
   function patchChunkOffsets(data,moov,delta){
-    const view=new DataView(data.buffer,data.byteOffset,data.byteLength),types=['stco','co64'];
-    for(let pos=moov.at+moov.header+4;pos+12<moov.end;pos++){
-      const type=String.fromCharCode(...data.slice(pos,pos+4));if(!types.includes(type))continue;
-      const boxAt=pos-4,size=readU32(view,boxAt);if(size<16||boxAt+size>moov.end)continue;
-      const count=readU32(view,pos+8),step=type==='stco'?4:8,first=pos+12;if(first+count*step>boxAt+size)continue;
-      for(let n=0;n<count;n++){const p=first+n*step;if(type==='stco'){const value=readU32(view,p);if(value>=moov.end)view.setUint32(p,value+delta,false);}else{const value=view.getBigUint64(p,false);if(value>=BigInt(moov.end))view.setBigUint64(p,value+BigInt(delta),false);}}
-      pos=boxAt+size-1;
+    const view=new DataView(data.buffer,data.byteOffset,data.byteLength),containers=new Set(['moov','trak','mdia','minf','stbl']);
+    function walk(start,end){
+      for(const b of childBoxes(data,start,end)){
+        if(b.type==='stco'){const count=readU32(view,b.at+12);for(let n=0;n<count;n++){const p=b.at+16+n*4,value=readU32(view,p);if(value>=moov.end)view.setUint32(p,value+delta,false);}}
+        else if(b.type==='co64'){const count=readU32(view,b.at+12);for(let n=0;n<count;n++){const p=b.at+16+n*8,value=view.getBigUint64(p,false);if(value>=BigInt(moov.end))view.setBigUint64(p,value+BigInt(delta),false);}}
+        if(containers.has(b.type))walk(b.at+b.header,b.end);
+      }
     }
+    walk(moov.at+moov.header,moov.end);
   }
-  async function movWithContentIdentifier(blob,identifier){
+  async function movWithContentIdentifier(blob,identifier,stillTimeSeconds){
     const src=new Uint8Array(await blob.arrayBuffer()),moov=findTopBox(src,'moov');if(!moov)throw new Error('Не удалось найти структуру MOV/MP4 для Live Photo.');
-    const meta=movieMeta(identifier),copy=src.slice();patchChunkOffsets(copy,moov,meta.length);
+    const info=movieInfo(src,moov),meta=movieMeta(identifier),placeholder=stillImageTrack(info.trackId,info.timescale,stillTimeSeconds,0),delta=meta.length+placeholder.length;
+    const sample=Uint8Array.of(0,0,0,9,0,0,0,1,0xff),sampleOffset=src.length+delta+8,track=stillImageTrack(info.trackId,info.timescale,stillTimeSeconds,sampleOffset),copy=src.slice();
+    patchChunkOffsets(copy,moov,delta);
     const view=new DataView(copy.buffer,copy.byteOffset,copy.byteLength);
-    if(readU32(view,moov.at)===1)view.setBigUint64(moov.at+8,BigInt(moov.size+meta.length),false);else view.setUint32(moov.at,moov.size+meta.length,false);
-    return new Blob([copy.slice(0,moov.end),meta,copy.slice(moov.end)],{type:'video/quicktime'});
+    if(readU32(view,moov.at)===1)view.setBigUint64(moov.at+8,BigInt(moov.size+delta),false);else view.setUint32(moov.at,moov.size+delta,false);
+    view.setUint32(info.mvhd.end-4,info.trackId+1,false);
+    return new Blob([copy.slice(0,moov.end),track,meta,copy.slice(moov.end),qtBox('mdat',sample)],{type:'video/quicktime'});
   }
   let crcTable=null;
   function crc32(data){if(!crcTable){crcTable=new Uint32Array(256);for(let n=0;n<256;n++){let c=n;for(let k=0;k<8;k++)c=(c&1)?0xedb88320^(c>>>1):c>>>1;crcTable[n]=c>>>0;}}let c=0xffffffff;for(const b of data)c=crcTable[(c^b)&255]^(c>>>8);return (c^0xffffffff)>>>0;}
@@ -303,17 +334,17 @@
   async function exportLivePhoto(){
     if(exporting)return;const type=mp4Type();if(!type){$('videoStatus').textContent='Live Photo требует MP4/H.264. Откройте сайт в Safari, новом Chrome или Edge.';return;}exporting=true;
     try{
-      const {blob:rawVideo,dims,frozen}=await recordAnimation(type,'Готовим Live Photo: записываем анимацию…');
+      const {blob:rawVideo,dims,frozen}=await recordAnimation(type,'Готовим Live Photo: записываем анимацию и timed metadata track…');
       if(raf)cancelAnimationFrame(raf);render();
       const stillRaw=await new Promise((resolve,reject)=>canvas.toBlob(b=>b?resolve(b):reject(new Error('Не удалось создать ключевой кадр.')),'image/jpeg',.95));
-      const identifier=uuid(),still=await jpegWithContentIdentifier(stillRaw,identifier),movie=await movWithContentIdentifier(rawVideo,identifier),base=`LIVE_${identifier.replaceAll('-','').slice(0,12)}`,stillTime=Number((frozen.duration+.2).toFixed(3));
-      const photoFile=new File([still],base+'.JPG',{type:'image/jpeg'}),movieFile=new File([movie],base+'.MOV',{type:'video/quicktime'}),manifest=new File([JSON.stringify({format:'Apple Live Photo pair (browser beta)',contentIdentifier:identifier,photo:photoFile.name,video:movieFile.name,stillImageTimeSeconds:stillTime,photoMetadata:'Apple MakerNote 0x0011',movieMetadata:'com.apple.quicktime.content.identifier',timedStillImageMetadataTrack:false,width:dims.width,height:dims.height},null,2)],'live-photo.json',{type:'application/json'}),note=new File(['Live Photo browser beta\n\nJPG and MOV contain the same Apple Content Identifier. The MOV is generated by MediaRecorder; a dedicated com.apple.quicktime.still-image-time timed metadata track is not added by the browser. Newer Apple Photos versions may still pair the files, but Lock Screen eligibility is not guaranteed.\n\nOn iPhone, use Share → Save to Photos for both files together. If they appear separately, use the MOV in a Live Photo converter.'],'README.txt',{type:'text/plain'});
-      const pair=[photoFile,movieFile];
-      if(isMobile()&&navigator.share&&navigator.canShare&&navigator.canShare({files:pair})){
-        try{await navigator.share({files:pair,title:'Hello Live Photo'});$('videoStatus').textContent='Пара JPG + MOV передана в системное меню. Сохраните оба файла в «Фото» одновременно.';return;}catch(e){if(e.name==='AbortError'){$('videoStatus').textContent='Экспорт Live Photo отменён.';return;}}
+      const identifier=uuid(),stillTime=Number((frozen.duration+.2).toFixed(3)),still=await jpegWithContentIdentifier(stillRaw,identifier),movie=await movWithContentIdentifier(rawVideo,identifier,stillTime),base=`LIVE_${identifier.replaceAll('-','').slice(0,12)}`;
+      const photoFile=new File([still],base+'.JPG',{type:'image/jpeg'}),movieFile=new File([movie],base+'.MOV',{type:'video/quicktime'});
+      const archive=await zipFiles([photoFile,movieFile]),livp=new File([archive],`hello-live-photo-${dims.width}x${dims.height}.livp`,{type:'application/zip'});
+      if(isMobile()&&navigator.share&&navigator.canShare&&navigator.canShare({files:[livp]})){
+        try{await navigator.share({files:[livp],title:'Hello Live Photo'});$('videoStatus').textContent='Live Photo .livp готов. Сохраните его в «Файлы» или откройте совместимым приложением. Safari не может напрямую создать единый Live Photo в медиатеке.';return;}catch(e){if(e.name==='AbortError'){$('videoStatus').textContent='Экспорт Live Photo отменён.';return;}}
       }
-      const archive=await zipFiles([photoFile,movieFile,manifest,note]),zip=new File([archive],`hello-live-photo-${dims.width}x${dims.height}.zip`,{type:'application/zip'});download(zip);
-      $('videoStatus').textContent='Live Photo-пакет готов: JPG + MOV имеют общий Apple Content Identifier. ZIP также содержит технический manifest и инструкцию.';
+      download(livp);
+      $('videoStatus').textContent='Live Photo .livp готов. Внутри JPG + MOV с общим Content Identifier и still-image-time metadata track.';
     }catch(e){$('videoStatus').textContent=e.message;}
     finally{exporting=false;updateVideoInfo();}
   }

@@ -29,7 +29,7 @@ node tests/renderer.cjs
 
 Дополнительно проверены: отличие стекла от обычного текста, изменение объёма, пустое начало анимации, разные промежуточные кадры, неизменный финал после завершения, чётные ограниченные размеры видео и стекло для пользовательского текста.
 
-Для Live Photo beta отдельно выполнена структурная проверка бинарного сборщика: UUID присутствует в JPEG MakerNote, тот же UUID помещается в QuickTime `com.apple.quicktime.content.identifier`, рост `moov` корректен, а `stco` после вставки метаданных пересчитывается.
+После физического теста на iPhone прежний вариант признан некорректным: Web Share сохранил JPG и MOV как два независимых объекта. Экспорт переработан. Теперь MOV получает `mebx` data-track `com.apple.quicktime.still-image-time`, top-level QuickTime metadata `com.apple.quicktime.content.identifier`, а JPEG — совпадающий MakerApple tag 17. На локальном H.264 MP4 `ffprobe` видит второй stream `codec_tag_string=mebx`, `time_base=1/600`, `start_time=2.200000`, при этом основной H.264 stream остаётся декодируемым.
 
 ## Браузерная проверка
 
@@ -66,6 +66,6 @@ MediaRecorder записывает в реальном времени: част�
 - Safari на iPhone: системное меню «Поделиться» и «Сохранить изображение».
 - Edge на Windows, Chrome на Android и Safari на macOS.
 - Максимальное 6000 × 6000 на мобильных устройствах с ограничением памяти.
-- Live Photo beta на физическом iPhone: объединение JPG + MOV в один Live Photo и доступность анимации на экране блокировки. Отдельный `com.apple.quicktime.still-image-time` metadata track браузерная версия пока не создаёт.
+- `.livp` на физическом iPhone через совместимый импортёр или нативный PhotoKit: проверка, что итоговый Photos asset получает значок Live и допускается на экран блокировки. Прямой импорт из Safari в Photos не считается поддерживаемым путём, потому что Web API не предоставляет `PHAssetCreationRequest`.
 
 Изменение ширины iframe проверяет адаптивную вёрстку, но не эмулирует Safari или мобильную ОС.
