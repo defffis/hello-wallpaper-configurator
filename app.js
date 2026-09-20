@@ -37,6 +37,7 @@
     $('stroke').disabled=state.text.trim()!=='hello';
     $('textHint').textContent=state.text.trim()==='hello'?'Apple / iPhone Hello · векторная надпись':'Фирменный стиль Apple Hello доступен только для слова «hello». Другой текст использует рукописный шрифт устройства.';
     $('export').textContent=`Экспортировать ${state.format==='png'?'PNG':'JPEG'}`;
+    $('quickExport').textContent=`Сохранить ${state.format==='png'?'PNG':'JPEG'}`;
     document.querySelectorAll('[data-palette]').forEach((btn,i)=>btn.setAttribute('aria-pressed',String(state.bg1===palettes[i][1]&&state.bg2===palettes[i][2])));
     canvas.setAttribute('aria-label',`Предпросмотр обоев ${state.width} на ${state.height} пикселей${state.showText&&state.text?`, надпись «${state.text}»`:''}`);
   }
@@ -96,10 +97,11 @@
   $('export').addEventListener('click',async()=>{
     // Capture current file synchronously; never await before a prepared Web Share call.
     if(isMobile()&&prepared?.revision===revision){const file=prepared.file;if(canShare(file))await share(file);else openSave(file);return;}
-    const btn=$('export');btn.disabled=true;$('status').textContent='Готовим изображение…';
+    const btn=$('export');btn.disabled=true;$('quickExport').disabled=true;$('status').textContent='Готовим изображение…';
     const version=revision,name=filename();
-    try{if(raf)cancelAnimationFrame(raf);render();const blob=await makeBlob();const file=new File([blob],name,{type:blob.type});if(isMobile()){if(version===revision)prepared={revision:version,file};openSave(file);$('status').textContent='Изображение готово к сохранению.';}else download(file);}catch(e){$('status').textContent=e.message;}finally{btn.disabled=false;}
+    try{if(raf)cancelAnimationFrame(raf);render();const blob=await makeBlob();const file=new File([blob],name,{type:blob.type});if(isMobile()){if(version===revision)prepared={revision:version,file};openSave(file);$('status').textContent='Изображение готово к сохранению.';}else download(file);}catch(e){$('status').textContent=e.message;}finally{btn.disabled=false;$('quickExport').disabled=false;}
   });
+  $('quickExport').addEventListener('click',()=>{if(!$('export').disabled)$('export').click();});
   $('share').addEventListener('click',()=>{if(dialogFile)share(dialogFile);});
   $('closeDialog').addEventListener('click',()=>$('saveDialog').close());
   $('saveDialog').addEventListener('close',releaseDialog);
