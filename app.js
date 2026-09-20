@@ -39,7 +39,7 @@
     $('export').textContent=`Экспортировать ${state.format==='png'?'PNG':'JPEG'}`;
     $('quickExport').textContent=`Сохранить ${state.format==='png'?'PNG':'JPEG'}`;
     document.querySelectorAll('[data-palette]').forEach((btn,i)=>btn.setAttribute('aria-pressed',String(state.bg1===palettes[i][1]&&state.bg2===palettes[i][2])));
-    canvas.setAttribute('aria-label',`Предпросмотр обоев ${state.width} на ${state.height} пикселей${state.showText&&state.text?`, надпись «${state.text}»`:''}`);
+    $('previewCanvas').setAttribute('aria-label',`Предпросмотр обоев ${state.width} на ${state.height} пикселей${state.showText&&state.text?`, надпись «${state.text}»`:''}`);
   }
   function rgb(hex) {return [1,3,5].map(i=>parseInt(hex.slice(i,i+2),16));}
   function render() {
@@ -79,9 +79,29 @@
         }
         ctx.restore();
       }
+      renderPreview();
       scheduleBlob();
     }catch(error){$('status').textContent='Не удалось отрисовать изображение. Уменьшите разрешение и попробуйте снова.';console.error(error);}
   }
+  // Downsample progressively to prevent moiré in the tiny on-screen dot grid.
+  // The original canvas remains untouched at the full export resolution.
+  function renderPreview() {
+    const preview=$('previewCanvas'),cssWidth=preview.getBoundingClientRect().width;
+    if(!cssWidth)return;
+    const width=Math.max(1,Math.round(cssWidth*Math.min(window.devicePixelRatio||1,3)));
+    const height=Math.max(1,Math.round(width*canvas.height/canvas.width));
+    let source=canvas;
+    while(source.width>width*2){
+      const step=document.createElement('canvas');step.width=Math.max(width,Math.floor(source.width/2));step.height=Math.max(height,Math.round(step.width*canvas.height/canvas.width));
+      const sc=step.getContext('2d');sc.imageSmoothingEnabled=true;sc.imageSmoothingQuality='high';sc.drawImage(source,0,0,step.width,step.height);
+      if(source!==canvas){source.width=1;source.height=1;}
+      source=step;
+    }
+    preview.width=width;preview.height=height;
+    const pc=preview.getContext('2d');pc.imageSmoothingEnabled=true;pc.imageSmoothingQuality='high';pc.drawImage(source,0,0,width,height);
+    if(source!==canvas){source.width=1;source.height=1;}
+  }
+  if(typeof ResizeObserver!=='undefined')new ResizeObserver(()=>renderPreview()).observe($('previewCanvas').parentElement);
   function changed(save=true) { revision++;prepared=null;clearTimeout(blobTimer);updateUI();if(!raf)raf=requestAnimationFrame(render);if(save)persist(); }
   function mime(){return state.format==='jpeg'?'image/jpeg':'image/png';}
   function filename(){return `hello-wallpaper-${state.width}x${state.height}.${state.format==='jpeg'?'jpg':'png'}`;}

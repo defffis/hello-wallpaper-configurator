@@ -7,9 +7,9 @@ function element(id='',value='') {return {id,value,checked:false,disabled:false,
 for(const tag of html.matchAll(/<(input|select|button|canvas|div|p|strong|dialog|img|a)\b[^>]*\bid="([^"]+)"[^>]*>/g)){const e=els[tag[2]]=element(tag[2],/\bvalue="([^"]*)"/.exec(tag[0])?.[1]||'');e.checked=/\bchecked\b/.test(tag[0]);}
 els.preset.options=['1290x2796','1206x2622','1179x2556','1170x2532','custom'].map(value=>({value}));
 const c=createCanvas(1290,2796);c.setAttribute=()=>{};c.toBlob=(cb,mime,q)=>c.encode(mime==='image/jpeg'?'jpeg':'png',Math.round(q*100)).then(b=>cb(new Blob([b],{type:mime})));
-els.canvas=c;
+els.canvas=c;const preview=createCanvas(620,1344);preview.setAttribute=()=>{};preview.getBoundingClientRect=()=>({width:310});els.previewCanvas=preview;
 const outputs=[...html.matchAll(/<output[^>]*for="([^"]+)"/g)].map(m=>({htmlFor:m[1],textContent:''}));
-const context={console,document:{getElementById:id=>els[id],querySelectorAll:q=>q.startsWith('output')?outputs:[],createElement:t=>t==='canvas'?createCanvas(1,1):element(),body:{append(){}}},Path2D,DOMMatrix,localStorage:{getItem:k=>stored.get(k)||null,setItem:(k,v)=>stored.set(k,v),removeItem:k=>stored.delete(k)},navigator:{userAgent:'test desktop',platform:'Linux',maxTouchPoints:0},setTimeout,clearTimeout,requestAnimationFrame:f=>{pending.push(f);return pending.length},cancelAnimationFrame(){},Blob,File,URL};
+const context={console,window:{devicePixelRatio:1},document:{getElementById:id=>els[id],querySelectorAll:q=>q.startsWith('output')?outputs:[],createElement:t=>t==='canvas'?createCanvas(1,1):element(),body:{append(){}}},Path2D,DOMMatrix,localStorage:{getItem:k=>stored.get(k)||null,setItem:(k,v)=>stored.set(k,v),removeItem:k=>stored.delete(k)},navigator:{userAgent:'test desktop',platform:'Linux',maxTouchPoints:0},setTimeout,clearTimeout,requestAnimationFrame:f=>{pending.push(f);return pending.length},cancelAnimationFrame(){},Blob,File,URL};
 vm.createContext(context);
 let source=fs.readFileSync(root+'/app.js','utf8');source=source.replace('updateUI(true);render();\n})();','updateUI(true);render();\nthis.qa={get state(){return state},set(raw){state=sanitize({...state,...raw});updateUI(true);changed();render()},render,makeBlob,filename,hslToHex,get prepared(){return prepared}};\n})();');
 vm.runInContext(source,context);const qa=context.qa;
