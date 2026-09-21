@@ -192,6 +192,8 @@
   let playing=0,previewStart=0,exporting=false,cancelRecording=null;
   const totalDuration=()=>state.duration+.8;
   function motionProgress(seconds,s=state){const t=clamp((seconds-.2)/s.duration,0,1);return t*t*(3-2*t);}
+  const LIVE_DURATION=58/30,LIVE_KEY_PROGRESS=.025;
+  function liveMotionProgress(seconds){const position=clamp(seconds/LIVE_DURATION,0,1),half=position<=.5?position*2:(1-position)*2,eased=half*half*(3-2*half);return LIVE_KEY_PROGRESS+(1-LIVE_KEY_PROGRESS)*eased;}
   function stopPreview(){if(playing)cancelAnimationFrame(playing);playing=0;$('play').textContent='▶ Проиграть один раз';}
   function motionFrame(seconds){const c=$('previewCanvas'),pc=c.getContext('2d');pc.globalAlpha=1;pc.drawImage(background,0,0,c.width,c.height);const s={...state,width:c.width,height:c.height};drawText(pc,s,motionProgress(seconds),c);$('timeline').value=Math.round(seconds/totalDuration()*100);$('playState').textContent=seconds>=totalDuration()?'Финальный кадр · без повтора':`${seconds.toFixed(1)} / ${totalDuration().toFixed(1)} с`;}
   $('quickGlass').addEventListener('click',()=>{state.material=state.material==='glass'?'solid':'glass';updateUI(true);changed();});
@@ -210,11 +212,11 @@
     $('videoInfo').textContent=type?`${d.width} × ${d.height} px · до 30 кадров/с · ≈${totalDuration().toFixed(1)} с · ${type.includes('mp4')?'MP4':'WebM (MP4 недоступен в этом режиме)'}`:'Этот браузер не поддерживает запись видео. Попробуйте современный Safari, Chrome или Edge.';
     $('exportVideo').disabled=!type||!state.showText||!state.text.trim();
     $('exportLivePhoto').disabled=!nativeType||!state.showText||!state.text.trim();
-    $('livePhotoHint').textContent=nativeType?'Создаётся .livp: JPG + MOV с общим Content Identifier и timed metadata track still-image-time. На iPhone сохраняйте пакет в «Файлы»/совместимое приложение — Safari не может создать единый PHAsset в «Фото».':'Для Live Photo нужен браузер, который умеет записывать H.264/MP4 (обычно Safari, новый Chrome или Edge).';
+    $('livePhotoHint').textContent=nativeType?'Профиль живых обоев iOS: 1,93 с, Bounce, одинаковые начальный и конечный кадры, variation-identifier 2 и LOOP 0. Импортируйте .livp через PhotoSync или другое совместимое приложение.':'Для Live Photo нужен браузер, который умеет записывать H.264/MP4 (обычно Safari, новый Chrome или Edge).';
   }
-  async function recordAnimation(type,message='Записываем анимацию. Оставьте эту вкладку открытой…'){
+  async function recordAnimation(type,message='Записываем анимацию. Оставьте эту вкладку открытой…',profile='standard'){
     stopPreview();if(raf)cancelAnimationFrame(raf);render();
-    const frozen={...state},dims=videoDimensions(frozen),duration=frozen.duration+.8,video=surface(dims.width,dims.height),v=video.getContext('2d',{alpha:false}),bg=surface(dims.width,dims.height);bg.getContext('2d').drawImage(background,0,0,dims.width,dims.height);
+    const frozen={...state},dims=videoDimensions(frozen),duration=profile==='live'?LIVE_DURATION:frozen.duration+.8,video=surface(dims.width,dims.height),v=video.getContext('2d',{alpha:false}),bg=surface(dims.width,dims.height);bg.getContext('2d').drawImage(background,0,0,dims.width,dims.height);
     const s={...frozen,...dims},locks=[...document.querySelectorAll('input,select,button')].filter(el=>el.id!=='cancelVideo').map(el=>[el,el.disabled]);locks.forEach(([el])=>el.disabled=true);
     $('cancelVideo').hidden=false;$('videoProgress').hidden=false;$('videoProgress').value=0;$('videoStatus').textContent=message;
     let stream,recorder,tick=0,watchdog;
@@ -227,7 +229,7 @@
         cancelRecording=()=>fail(new Error('Запись отменена. Настройки сохранены.'));
         recorder.ondataavailable=e=>{if(e.data.size)chunks.push(e.data);};recorder.onerror=()=>fail(new Error('Браузер не смог записать видео. Выберите 480p или WebM и повторите.'));
         recorder.onstop=()=>{if(cancelled||settled)return;settled=true;const result=new Blob(chunks,{type:recorder.mimeType||type});result.size?resolve(result):reject(new Error('Видео пустое. Попробуйте меньший размер.'));};
-        recorder.onstart=()=>{const started=performance.now();function frame(now){if(cancelled)return;const elapsed=(now-started)/1000;v.drawImage(bg,0,0);drawText(v,s,motionProgress(elapsed,s),bg);$('videoProgress').value=Math.round(Math.min(1,elapsed/duration)*100);if(elapsed<duration)tick=requestAnimationFrame(frame);else recorder.stop();}tick=requestAnimationFrame(frame);};
+        recorder.onstart=()=>{const started=performance.now();function frame(now){if(cancelled)return;const elapsed=Math.min(duration,(now-started)/1000),progress=profile==='live'?liveMotionProgress(elapsed):motionProgress(elapsed,s);v.drawImage(bg,0,0);drawText(v,s,progress,bg);$('videoProgress').value=Math.round(Math.min(1,elapsed/duration)*100);if(elapsed<duration)tick=requestAnimationFrame(frame);else recorder.stop();}tick=requestAnimationFrame(frame);};
         watchdog=setTimeout(()=>fail(new Error('Запись прервана по времени. Снизьте размер видео и повторите.')),(duration+20)*1000);recorder.start();
       });
       return {blob,dims,frozen};
@@ -263,11 +265,12 @@
   const fullBox=(version=0,flags=0)=>Uint8Array.of(version,(flags>>>16)&255,(flags>>>8)&255,flags&255);
   const unityMatrix=hexBytes('000100000000000000000000000000000001000000000000000000000000000040000000');
   function movieMeta(identifier){
-    const hdlr=hexBytes('0000002268646c7200000000000000006d6474610000000000000000000000000000'),key=enc.encode('com.apple.quicktime.content.identifier');
-    const entry=bytes(be32(4+4+key.length),enc.encode('mdta'),key),keys=qtBox('keys',bytes(fullBox(),be32(1),entry));
-    const data=qtBox('data',bytes(be32(1),be32(0),enc.encode(identifier))),item=qtBox(Uint8Array.of(0,0,0,1),data),ilst=qtBox('ilst',item);
+    const hdlr=hexBytes('0000002268646c7200000000000000006d6474610000000000000000000000000000'),contentKey=enc.encode('com.apple.quicktime.content.identifier'),variationKey=enc.encode('com.apple.photos.variation-identifier');
+    const contentEntry=bytes(be32(4+4+contentKey.length),enc.encode('mdta'),contentKey),variationEntry=bytes(be32(4+4+variationKey.length),enc.encode('mdta'),variationKey),keys=qtBox('keys',bytes(fullBox(),be32(2),contentEntry,variationEntry));
+    const contentData=qtBox('data',bytes(be32(1),be32(0),enc.encode(identifier))),variationData=qtBox('data',bytes(be32(21),be32(0),be32(0),be32(2))),contentItem=qtBox(Uint8Array.of(0,0,0,1),contentData),variationItem=qtBox(Uint8Array.of(0,0,0,2),variationData),ilst=qtBox('ilst',bytes(contentItem,variationItem));
     return qtBox('meta',bytes(hdlr,keys,ilst));
   }
+  function movieLoopData(){return qtBox('udta',qtBox('LOOP',be32(0)));}
   function boxType(data,at){return String.fromCharCode(...data.slice(at+4,at+8));}
   function readBox(data,at,end=data.length){
     if(at+8>end)return null;const view=new DataView(data.buffer,data.byteOffset,data.byteLength);let size=readU32(view,at),header=8;
@@ -314,14 +317,16 @@
   }
   async function movWithContentIdentifier(blob,identifier,stillTimeSeconds){
     const src=new Uint8Array(await blob.arrayBuffer()),moov=findTopBox(src,'moov');if(!moov)throw new Error('Не удалось найти структуру MOV/MP4 для Live Photo.');
-    const info=movieInfo(src,moov),meta=movieMeta(identifier),placeholder=stillImageTrack(info.trackId,info.timescale,stillTimeSeconds,0),delta=meta.length+placeholder.length;
+    const info=movieInfo(src,moov),meta=movieMeta(identifier),loop=movieLoopData(),placeholder=stillImageTrack(info.trackId,info.timescale,stillTimeSeconds,0),delta=meta.length+loop.length+placeholder.length;
     const sample=Uint8Array.of(0,0,0,9,0,0,0,1,0xff),sampleOffset=src.length+delta+8,track=stillImageTrack(info.trackId,info.timescale,stillTimeSeconds,sampleOffset),copy=src.slice();
     patchChunkOffsets(copy,moov,delta);
+    const ftyp=findTopBox(copy,'ftyp'),quickTimeBrand=enc.encode('qt  ');if(ftyp){copy.set(quickTimeBrand,ftyp.at+8);for(let at=ftyp.at+16;at+4<=ftyp.end;at+=4)copy.set(quickTimeBrand,at);}
     const view=new DataView(copy.buffer,copy.byteOffset,copy.byteLength);
     if(readU32(view,moov.at)===1)view.setBigUint64(moov.at+8,BigInt(moov.size+delta),false);else view.setUint32(moov.at,moov.size+delta,false);
     view.setUint32(info.mvhd.end-4,info.trackId+1,false);
-    return new Blob([copy.slice(0,moov.end),track,meta,copy.slice(moov.end),qtBox('mdat',sample)],{type:'video/quicktime'});
+    return new Blob([copy.slice(0,moov.end),track,meta,loop,copy.slice(moov.end),qtBox('mdat',sample)],{type:'video/quicktime'});
   }
+  async function liveStillFrame(dims,frozen){const stillCanvas=surface(dims.width,dims.height),ctx=stillCanvas.getContext('2d',{alpha:false}),bg=surface(dims.width,dims.height);bg.getContext('2d').drawImage(background,0,0,dims.width,dims.height);ctx.drawImage(bg,0,0);drawText(ctx,{...frozen,...dims},liveMotionProgress(0),bg);try{return await new Promise((resolve,reject)=>stillCanvas.toBlob(b=>b?resolve(b):reject(new Error('Не удалось создать ключевой кадр.')),'image/jpeg',.95));}finally{stillCanvas.width=bg.width=1;}}
   let crcTable=null;
   function crc32(data){if(!crcTable){crcTable=new Uint32Array(256);for(let n=0;n<256;n++){let c=n;for(let k=0;k<8;k++)c=(c&1)?0xedb88320^(c>>>1):c>>>1;crcTable[n]=c>>>0;}}let c=0xffffffff;for(const b of data)c=crcTable[(c^b)&255]^(c>>>8);return (c^0xffffffff)>>>0;}
   async function zipFiles(files){
@@ -335,17 +340,15 @@
   async function exportLivePhoto(){
     if(exporting)return;const type=mp4Type();if(!type){$('videoStatus').textContent='Live Photo требует MP4/H.264. Откройте сайт в Safari, новом Chrome или Edge.';return;}exporting=true;
     try{
-      const {blob:rawVideo,dims,frozen}=await recordAnimation(type,'Готовим Live Photo: записываем анимацию и timed metadata track…');
-      if(raf)cancelAnimationFrame(raf);render();
-      const stillRaw=await new Promise((resolve,reject)=>canvas.toBlob(b=>b?resolve(b):reject(new Error('Не удалось создать ключевой кадр.')),'image/jpeg',.95));
-      const identifier=uuid(),stillTime=Number((frozen.duration+.2).toFixed(3)),still=await jpegWithContentIdentifier(stillRaw,identifier),movie=await movWithContentIdentifier(rawVideo,identifier,stillTime),base=`LIVE_${identifier.replaceAll('-','').slice(0,12)}`;
+      const {blob:rawVideo,dims,frozen}=await recordAnimation(type,'Готовим живые обои: записываем короткую Bounce-анимацию…','live');
+      const stillRaw=await liveStillFrame(dims,frozen),identifier=uuid(),stillTime=Number((LIVE_DURATION-1/30).toFixed(3)),still=await jpegWithContentIdentifier(stillRaw,identifier),movie=await movWithContentIdentifier(rawVideo,identifier,stillTime),base=`LIVE_${identifier.replaceAll('-','').slice(0,12)}`;
       const photoFile=new File([still],base+'.JPG',{type:'image/jpeg'}),movieFile=new File([movie],base+'.MOV',{type:'video/quicktime'});
       const archive=await zipFiles([photoFile,movieFile]),livp=new File([archive],`hello-live-photo-${dims.width}x${dims.height}.livp`,{type:'application/zip'});
       if(isMobile()&&navigator.share&&navigator.canShare&&navigator.canShare({files:[livp]})){
-        try{await navigator.share({files:[livp],title:'Hello Live Photo'});$('videoStatus').textContent='Live Photo .livp готов. Сохраните его в «Файлы» или откройте совместимым приложением. Safari не может напрямую создать единый Live Photo в медиатеке.';return;}catch(e){if(e.name==='AbortError'){$('videoStatus').textContent='Экспорт Live Photo отменён.';return;}}
+        try{await navigator.share({files:[livp],title:'Hello Live Photo'});$('videoStatus').textContent='Live Photo .livp готов: профиль Bounce для живых обоев iOS. Импортируйте файл через PhotoSync.';return;}catch(e){if(e.name==='AbortError'){$('videoStatus').textContent='Экспорт Live Photo отменён.';return;}}
       }
       download(livp);
-      $('videoStatus').textContent='Live Photo .livp готов. Внутри JPG + MOV с общим Content Identifier и still-image-time metadata track.';
+      $('videoStatus').textContent='Live Photo .livp готов. Внутри короткая Bounce-анимация, variation-identifier 2, LOOP 0 и связанная пара JPG + MOV.';
     }catch(e){$('videoStatus').textContent=e.message;}
     finally{exporting=false;updateVideoInfo();}
   }
