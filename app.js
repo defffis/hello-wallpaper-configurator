@@ -230,14 +230,14 @@
   $('timeline').addEventListener('input',()=>{stopPreview();motionFrame(Number($('timeline').value)/100*totalDuration());});
   function videoDimensions(s){const scale=Math.min(1,s.videoSize/Math.min(s.width,s.height),2560/Math.max(s.width,s.height));return {width:Math.max(2,Math.round(s.width*scale/2)*2),height:Math.max(2,Math.round(s.height*scale/2)*2)};}
   function firstSupported(types){if(typeof MediaRecorder==='undefined')return null;return types.find(type=>MediaRecorder.isTypeSupported(type))||null;}
-  function mp4Type(){return firstSupported(['video/mp4;codecs=avc1.42E01E','video/mp4']);}
+  function mp4Type(){return firstSupported(['video/mp4;codecs=hvc1.1.6.L123.B0','video/mp4;codecs=hvc1','video/mp4;codecs=hevc','video/mp4;codecs=avc1.42E01E','video/mp4']);}
   function videoType(){return state.videoFormat==='webm'?firstSupported(['video/webm;codecs=vp9','video/webm;codecs=vp8','video/webm']):firstSupported(['video/mp4;codecs=avc1.42E01E','video/mp4','video/webm;codecs=vp9','video/webm;codecs=vp8','video/webm']);}
   function updateVideoInfo(){
     const d=videoDimensions(state),type=videoType(),nativeType=mp4Type();
     $('videoInfo').textContent=type?`${d.width} × ${d.height} px · до 30 кадров/с · ≈${totalDuration().toFixed(1)} с · ${type.includes('mp4')?'MP4':'WebM (MP4 недоступен в этом режиме)'}`:'Этот браузер не поддерживает запись видео. Попробуйте современный Safari, Chrome или Edge.';
     $('exportVideo').disabled=!type||!state.showText||!state.text.trim();
     $('exportLivePhoto').disabled=!nativeType||!state.showText||!state.text.trim();
-    $('livePhotoHint').textContent=nativeType?'Формат как у рабочего Live Photo: связанная пара HEIC + MOV с общим Content Identifier. Анимация длится около 1 с, без обратного движения.':'Для Live Photo нужен браузер, который умеет записывать H.264/MP4 (обычно Safari, новый Chrome или Edge).';
+    $('livePhotoHint').textContent=nativeType?'Формат как у рабочего Live Photo: связанная пара HEIC + MOV с общим Content Identifier. Для MOV сначала используется HEVC/H.265, если браузер умеет его записывать; иначе H.264. Анимация длится около 1 с, без обратного движения.':'Для Live Photo нужен браузер, который умеет записывать HEVC/H.264 в MP4 (обычно Safari, новый Chrome или Edge).';
   }
   async function recordAnimation(type,message='Записываем анимацию. Оставьте эту вкладку открытой…',profile='standard'){
     stopPreview();if(raf)cancelAnimationFrame(raf);render();
@@ -320,8 +320,8 @@
     const gmhd=hexBytes('00000020676d686400000018676d696e00000000004080008000800000000000');
     const hdlrData=hexBytes('0000003868646c720000000064686c72616c69736170706c000000000000000017436f7265204d6564696120446174612048616e646c6572');
     const dinf=hexBytes('0000002464696e660000001c6472656600000000000000010000000c616c697300000001');
-    const keyd=qtBox('keyd',bytes(enc.encode('mdta'),enc.encode('com.apple.quicktime.still-image-time'))),transformKeyd=qtBox('keyd',bytes(enc.encode('mdta'),enc.encode('com.apple.quicktime.live-photo-still-image-transform'))),dtyp=qtBox('dtyp',bytes(be32(0),be32(0x41)));
-    const keyEntry=bytes(be32(8+keyd.length+dtyp.length),be32(1),keyd,dtyp),transformEntry=bytes(be32(8+transformKeyd.length+dtyp.length),be32(2),transformKeyd,dtyp),keys=qtBox('keys',bytes(keyEntry,transformEntry));
+    const keyd=qtBox('keyd',bytes(enc.encode('mdta'),enc.encode('com.apple.quicktime.still-image-time'))),transformKeyd=qtBox('keyd',bytes(enc.encode('mdta'),enc.encode('com.apple.quicktime.live-photo-still-image-transform'))),dtyp=qtBox('dtyp',bytes(be32(0),be32(0x41))),transformDtyp=qtBox('dtyp',bytes(be32(0),be32(0x53)));
+    const keyEntry=bytes(be32(8+keyd.length+dtyp.length),be32(1),keyd,dtyp),transformEntry=bytes(be32(8+transformKeyd.length+transformDtyp.length),be32(2),transformKeyd,transformDtyp),keys=qtBox('keys',bytes(keyEntry,transformEntry));
     const mebx=bytes(be32(8+8+keys.length),enc.encode('mebx'),new Uint8Array(6),be16(1),keys);
     const stsd=qtBox('stsd',bytes(fullBox(),be32(1),mebx)),stts=qtBox('stts',bytes(fullBox(),be32(1),be32(1),be32(1)));
     const stsc=qtBox('stsc',bytes(fullBox(),be32(1),be32(1),be32(1),be32(1))),stsz=qtBox('stsz',bytes(fullBox(),be32(89),be32(1))),stco=qtBox('stco',bytes(fullBox(),be32(1),be32(sampleOffset)));
