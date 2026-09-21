@@ -217,8 +217,8 @@
   let playing=0,previewStart=0,exporting=false,cancelRecording=null;
   const totalDuration=()=>state.duration+.8;
   function motionProgress(seconds,s=state){const t=clamp((seconds-.2)/s.duration,0,1);return t*t*(3-2*t);}
-  const LIVE_DURATION=58/30;
-  function liveMotionProgress(seconds){const t=clamp(seconds/LIVE_DURATION,0,1);return t*t*(3-2*t);}
+  const LIVE_DURATION=1;
+  function liveMotionProgress(seconds){const t=clamp(seconds/(LIVE_DURATION*.5),0,1);return t*t*(3-2*t);}
   function stopPreview(){if(playing)cancelAnimationFrame(playing);playing=0;$('play').textContent='▶ Проиграть один раз';}
   function motionFrame(seconds){const c=$('previewCanvas'),pc=c.getContext('2d');pc.globalAlpha=1;pc.drawImage(background,0,0,c.width,c.height);const s={...state,width:c.width,height:c.height};drawText(pc,s,motionProgress(seconds),c);$('timeline').value=Math.round(seconds/totalDuration()*100);$('playState').textContent=seconds>=totalDuration()?'Финальный кадр · без повтора':`${seconds.toFixed(1)} / ${totalDuration().toFixed(1)} с`;}
   $('quickGlass').addEventListener('click',()=>{state.material=state.material==='glass'?'solid':'glass';updateUI(true);changed();});
@@ -237,7 +237,7 @@
     $('videoInfo').textContent=type?`${d.width} × ${d.height} px · до 30 кадров/с · ≈${totalDuration().toFixed(1)} с · ${type.includes('mp4')?'MP4':'WebM (MP4 недоступен в этом режиме)'}`:'Этот браузер не поддерживает запись видео. Попробуйте современный Safari, Chrome или Edge.';
     $('exportVideo').disabled=!type||!state.showText||!state.text.trim();
     $('exportLivePhoto').disabled=!nativeType||!state.showText||!state.text.trim();
-    $('livePhotoHint').textContent=nativeType?'Профиль живых обоев iOS: 1,93 с, однократное появление без обратного движения, variation-identifier 2 и LOOP 0. Импортируйте .livp через PhotoSync или другое совместимое приложение.':'Для Live Photo нужен браузер, который умеет записывать H.264/MP4 (обычно Safari, новый Chrome или Edge).';
+    $('livePhotoHint').textContent=nativeType?'Формат как у рабочего Live Photo: связанная пара HEIC + MOV с общим Content Identifier. Анимация длится около 1 с, без обратного движения.':'Для Live Photo нужен браузер, который умеет записывать H.264/MP4 (обычно Safari, новый Chrome или Edge).';
   }
   async function recordAnimation(type,message='Записываем анимацию. Оставьте эту вкладку открытой…',profile='standard'){
     stopPreview();if(raf)cancelAnimationFrame(raf);render();
@@ -247,7 +247,7 @@
     let stream,recorder,tick=0,watchdog;
     try{
       if(!video.captureStream)throw new Error('Запись canvas недоступна. Попробуйте другой браузер.');
-      v.drawImage(bg,0,0);stream=video.captureStream(30);recorder=new MediaRecorder(stream,{mimeType:type,videoBitsPerSecond:Math.min(20000000,dims.width*dims.height*5)});
+      v.drawImage(bg,0,0);stream=video.captureStream(profile==='live'?60:30);recorder=new MediaRecorder(stream,{mimeType:type,videoBitsPerSecond:Math.min(20000000,dims.width*dims.height*5)});
       const chunks=[];
       const blob=await new Promise((resolve,reject)=>{
         let cancelled=false,settled=false;const fail=error=>{if(settled)return;settled=true;cancelled=true;cancelAnimationFrame(tick);if(recorder.state!=='inactive')recorder.stop();reject(error);};
@@ -290,12 +290,11 @@
   const fullBox=(version=0,flags=0)=>Uint8Array.of(version,(flags>>>16)&255,(flags>>>8)&255,flags&255);
   const unityMatrix=hexBytes('000100000000000000000000000000000001000000000000000000000000000040000000');
   function movieMeta(identifier){
-    const hdlr=hexBytes('0000002268646c7200000000000000006d6474610000000000000000000000000000'),contentKey=enc.encode('com.apple.quicktime.content.identifier'),variationKey=enc.encode('com.apple.photos.variation-identifier');
-    const contentEntry=bytes(be32(4+4+contentKey.length),enc.encode('mdta'),contentKey),variationEntry=bytes(be32(4+4+variationKey.length),enc.encode('mdta'),variationKey),keys=qtBox('keys',bytes(fullBox(),be32(2),contentEntry,variationEntry));
-    const contentData=qtBox('data',bytes(be32(1),be32(0),enc.encode(identifier))),variationData=qtBox('data',bytes(be32(21),be32(0),be32(0),be32(2))),contentItem=qtBox(Uint8Array.of(0,0,0,1),contentData),variationItem=qtBox(Uint8Array.of(0,0,0,2),variationData),ilst=qtBox('ilst',bytes(contentItem,variationItem));
+    const hdlr=hexBytes('0000002268646c7200000000000000006d6474610000000000000000000000000000'),contentKey=enc.encode('com.apple.quicktime.content.identifier');
+    const contentEntry=bytes(be32(4+4+contentKey.length),enc.encode('mdta'),contentKey),keys=qtBox('keys',bytes(fullBox(),be32(1),contentEntry));
+    const contentData=qtBox('data',bytes(be32(1),be32(0),enc.encode(identifier))),contentItem=qtBox(Uint8Array.of(0,0,0,1),contentData),ilst=qtBox('ilst',contentItem);
     return qtBox('meta',bytes(hdlr,keys,ilst));
   }
-  function movieLoopData(){return qtBox('udta',qtBox('LOOP',be32(0)));}
   function boxType(data,at){return String.fromCharCode(...data.slice(at+4,at+8));}
   function readBox(data,at,end=data.length){
     if(at+8>end)return null;const view=new DataView(data.buffer,data.byteOffset,data.byteLength);let size=readU32(view,at),header=8;
@@ -321,11 +320,11 @@
     const gmhd=hexBytes('00000020676d686400000018676d696e00000000004080008000800000000000');
     const hdlrData=hexBytes('0000003868646c720000000064686c72616c69736170706c000000000000000017436f7265204d6564696120446174612048616e646c6572');
     const dinf=hexBytes('0000002464696e660000001c6472656600000000000000010000000c616c697300000001');
-    const keyd=qtBox('keyd',bytes(enc.encode('mdta'),enc.encode('com.apple.quicktime.still-image-time'))),dtyp=qtBox('dtyp',bytes(be32(0),be32(0x41)));
-    const keyEntry=bytes(be32(8+keyd.length+dtyp.length),be32(1),keyd,dtyp),keys=qtBox('keys',keyEntry);
+    const keyd=qtBox('keyd',bytes(enc.encode('mdta'),enc.encode('com.apple.quicktime.still-image-time'))),transformKeyd=qtBox('keyd',bytes(enc.encode('mdta'),enc.encode('com.apple.quicktime.live-photo-still-image-transform'))),dtyp=qtBox('dtyp',bytes(be32(0),be32(0x41)));
+    const keyEntry=bytes(be32(8+keyd.length+dtyp.length),be32(1),keyd,dtyp),transformEntry=bytes(be32(8+transformKeyd.length+dtyp.length),be32(2),transformKeyd,dtyp),keys=qtBox('keys',bytes(keyEntry,transformEntry));
     const mebx=bytes(be32(8+8+keys.length),enc.encode('mebx'),new Uint8Array(6),be16(1),keys);
     const stsd=qtBox('stsd',bytes(fullBox(),be32(1),mebx)),stts=qtBox('stts',bytes(fullBox(),be32(1),be32(1),be32(1)));
-    const stsc=qtBox('stsc',bytes(fullBox(),be32(1),be32(1),be32(1),be32(1))),stsz=qtBox('stsz',bytes(fullBox(),be32(9),be32(1))),stco=qtBox('stco',bytes(fullBox(),be32(1),be32(sampleOffset)));
+    const stsc=qtBox('stsc',bytes(fullBox(),be32(1),be32(1),be32(1),be32(1))),stsz=qtBox('stsz',bytes(fullBox(),be32(89),be32(1))),stco=qtBox('stco',bytes(fullBox(),be32(1),be32(sampleOffset)));
     const stbl=qtBox('stbl',bytes(stsd,stts,stsc,stsz,stco)),minf=qtBox('minf',bytes(gmhd,hdlrData,dinf,stbl)),mdia=qtBox('mdia',bytes(mdhd,hdlrMeta,minf));
     return qtBox('trak',bytes(tkhd,edts,mdia));
   }
@@ -342,16 +341,82 @@
   }
   async function movWithContentIdentifier(blob,identifier,stillTimeSeconds){
     const src=new Uint8Array(await blob.arrayBuffer()),moov=findTopBox(src,'moov');if(!moov)throw new Error('Не удалось найти структуру MOV/MP4 для Live Photo.');
-    const info=movieInfo(src,moov),meta=movieMeta(identifier),loop=movieLoopData(),placeholder=stillImageTrack(info.trackId,info.timescale,stillTimeSeconds,0),delta=meta.length+loop.length+placeholder.length;
-    const sample=Uint8Array.of(0,0,0,9,0,0,0,1,0xff),sampleOffset=src.length+delta+8,track=stillImageTrack(info.trackId,info.timescale,stillTimeSeconds,sampleOffset),copy=src.slice();
+    const info=movieInfo(src,moov),meta=movieMeta(identifier),placeholder=stillImageTrack(info.trackId,info.timescale,stillTimeSeconds,0),delta=meta.length+placeholder.length;
+    const identity64=hexBytes('3ff00000000000000000000000000000000000000000000000000000000000003ff00000000000000000000000000000000000000000000000000000000000003ff0000000000000'),sample=bytes(be32(9),be32(1),Uint8Array.of(0xff),be32(80),be32(2),identity64),sampleOffset=src.length+delta+8,track=stillImageTrack(info.trackId,info.timescale,stillTimeSeconds,sampleOffset),copy=src.slice();
     patchChunkOffsets(copy,moov,delta);
     const ftyp=findTopBox(copy,'ftyp'),quickTimeBrand=enc.encode('qt  ');if(ftyp){copy.set(quickTimeBrand,ftyp.at+8);for(let at=ftyp.at+16;at+4<=ftyp.end;at+=4)copy.set(quickTimeBrand,at);}
     const view=new DataView(copy.buffer,copy.byteOffset,copy.byteLength);
     if(readU32(view,moov.at)===1)view.setBigUint64(moov.at+8,BigInt(moov.size+delta),false);else view.setUint32(moov.at,moov.size+delta,false);
     view.setUint32(info.mvhd.end-4,info.trackId+1,false);
-    return new Blob([copy.slice(0,moov.end),track,meta,loop,copy.slice(moov.end),qtBox('mdat',sample)],{type:'video/quicktime'});
+    return new Blob([copy.slice(0,moov.end),track,meta,copy.slice(moov.end),qtBox('mdat',sample)],{type:'video/quicktime'});
   }
-  async function liveStillFrame(dims,frozen){const stillCanvas=surface(dims.width,dims.height),ctx=stillCanvas.getContext('2d',{alpha:false}),bg=surface(dims.width,dims.height);bg.getContext('2d').drawImage(background,0,0,dims.width,dims.height);ctx.drawImage(bg,0,0);drawText(ctx,{...frozen,...dims},liveMotionProgress(LIVE_DURATION),bg);try{return await new Promise((resolve,reject)=>stillCanvas.toBlob(b=>b?resolve(b):reject(new Error('Не удалось создать ключевой кадр.')),'image/jpeg',.95));}finally{stillCanvas.width=bg.width=1;}}
+
+  let heicModulePromise=null;
+  function loadHeicModule(){
+    if(heicModulePromise)return heicModulePromise;
+    heicModulePromise=new Promise((resolve,reject)=>{
+      const init=()=>{
+        try{
+          if(typeof globalThis.__init__ELHEIF_MODULE!=='function')throw new Error('HEIC-кодировщик не загрузился.');
+          const module={};module.onRuntimeInitialized=()=>resolve(module);globalThis.__init__ELHEIF_MODULE(module);
+        }catch(error){reject(error);}
+      };
+      if(typeof globalThis.__init__ELHEIF_MODULE==='function'){init();return;}
+      const script=document.createElement('script');script.src='https://cdn.jsdelivr.net/npm/elheif@0.1.0/pkg/elheif-wasm.js';script.async=true;script.crossOrigin='anonymous';script.onload=init;script.onerror=()=>reject(new Error('Не удалось загрузить HEIC-кодировщик. Проверьте подключение к интернету.'));document.head.appendChild(script);
+    });
+    return heicModulePromise;
+  }
+  const readSized=(data,at,size)=>{let value=0n;for(let i=0;i<size;i++)value=(value<<8n)|BigInt(data[at+i]);if(value>BigInt(Number.MAX_SAFE_INTEGER))throw new Error('Слишком большой HEIC-файл.');return Number(value);};
+  const beSized=(value,size)=>{let n=BigInt(value),out=new Uint8Array(size);for(let i=size-1;i>=0;i--){out[i]=Number(n&255n);n>>=8n;}return out;};
+  function parseHeifIloc(data,b){
+    const version=data[b.at+8],flags=(data[b.at+9]<<16)|(data[b.at+10]<<8)|data[b.at+11];let at=b.at+12;
+    const first=data[at++],second=data[at++],offsetSize=first>>4,lengthSize=first&15,baseOffsetSize=second>>4,indexSize=(version===1||version===2)?second&15:0,countSize=version<2?2:4,itemIdSize=version<2?2:4,itemCount=readSized(data,at,countSize);at+=countSize;const items=[];
+    for(let n=0;n<itemCount;n++){
+      const itemId=readSized(data,at,itemIdSize);at+=itemIdSize;let method=0;if(version===1||version===2){method=readSized(data,at,2)&15;at+=2;}const dataRef=readSized(data,at,2);at+=2;const base=baseOffsetSize?readSized(data,at,baseOffsetSize):0;at+=baseOffsetSize;const extentCount=readSized(data,at,2);at+=2;const extents=[];
+      for(let e=0;e<extentCount;e++){let index=0;if((version===1||version===2)&&indexSize){index=readSized(data,at,indexSize);at+=indexSize;}const offset=offsetSize?readSized(data,at,offsetSize):0;at+=offsetSize;const length=lengthSize?readSized(data,at,lengthSize):0;at+=lengthSize;extents.push({index,offset,length});}
+      items.push({itemId,method,dataRef,base,extents});
+    }
+    return {version,flags,offsetSize,lengthSize,baseOffsetSize,indexSize,itemIdSize,items};
+  }
+  function buildHeifIloc(info,items){
+    const parts=[Uint8Array.of((info.offsetSize<<4)|info.lengthSize,(info.baseOffsetSize<<4)|((info.version===1||info.version===2)?info.indexSize:0)),beSized(items.length,info.version<2?2:4)];
+    for(const item of items){
+      parts.push(beSized(item.itemId,info.itemIdSize));if(info.version===1||info.version===2)parts.push(be16(item.method&15));parts.push(be16(item.dataRef));if(info.baseOffsetSize)parts.push(beSized(item.base,info.baseOffsetSize));parts.push(be16(item.extents.length));
+      for(const extent of item.extents){if((info.version===1||info.version===2)&&info.indexSize)parts.push(beSized(extent.index,info.indexSize));if(info.offsetSize)parts.push(beSized(extent.offset,info.offsetSize));if(info.lengthSize)parts.push(beSized(extent.length,info.lengthSize));}
+    }
+    return qtBox('iloc',bytes(fullBox(info.version,info.flags),...parts));
+  }
+  function heifExifEntry(itemId){
+    const version=itemId<=65535?2:3,itemBytes=version===2?be16(itemId):be32(itemId);return qtBox('infe',bytes(fullBox(version),itemBytes,be16(0),enc.encode('Exif'),Uint8Array.of(0)));
+  }
+  function addHeifIinf(data,b,itemId){
+    const version=data[b.at+8],flags=(data[b.at+9]<<16)|(data[b.at+10]<<8)|data[b.at+11],countSize=version===0?2:4,at=b.at+12,count=readSized(data,at,countSize);
+    return qtBox('iinf',bytes(fullBox(version,flags),beSized(count+1,countSize),data.slice(at+countSize,b.end),heifExifEntry(itemId)));
+  }
+  function buildHeifIref(data,b,itemId,primaryId){
+    const version=b?data[b.at+8]:0,flags=b?((data[b.at+9]<<16)|(data[b.at+10]<<8)|data[b.at+11]):0,idSize=version===0?2:4,existing=b?data.slice(b.at+12,b.end):new Uint8Array(0),cdsc=qtBox('cdsc',bytes(beSized(itemId,idSize),be16(1),beSized(primaryId,idSize)));
+    return qtBox('iref',bytes(fullBox(version,flags),existing,cdsc));
+  }
+  function livePhotoExif(identifier){
+    const id=enc.encode(identifier+'\0'),maker=bytes(enc.encode('Apple iOS\0'),Uint8Array.of(0,1),enc.encode('MM'),be16(1),be16(0x0011),be16(2),be32(id.length),be32(32),be32(0),id);
+    const tiff=bytes(enc.encode('MM'),be16(0x002a),be32(8),be16(1),be16(0x8769),be16(4),be32(1),be32(26),be32(0),be16(2),be16(0x9000),be16(7),be32(4),enc.encode('0221'),be16(0x927c),be16(7),be32(maker.length),be32(56),be32(0),maker);
+    return bytes(be32(6),enc.encode('Exif\0\0'),tiff,Uint8Array.of(0));
+  }
+  function heicWithContentIdentifier(raw,identifier){
+    const src=raw instanceof Uint8Array?raw:new Uint8Array(raw),meta=findTopBox(src,'meta');if(!meta)throw new Error('HEIC не содержит meta box.');
+    const metaVersion=src[meta.at+8],metaFlags=(src[meta.at+9]<<16)|(src[meta.at+10]<<8)|src[meta.at+11],children=childBoxes(src,meta.at+meta.header+4,meta.end),pitm=children.find(b=>b.type==='pitm'),iinf=children.find(b=>b.type==='iinf'),ilocBox=children.find(b=>b.type==='iloc'),irefBox=children.find(b=>b.type==='iref');if(!pitm||!iinf||!ilocBox)throw new Error('HEIC имеет неподдерживаемую структуру.');
+    const pitmVersion=src[pitm.at+8],primaryId=readSized(src,pitm.at+12,pitmVersion===0?2:4),iloc=parseHeifIloc(src,ilocBox),newId=Math.max(...iloc.items.map(item=>item.itemId))+1,exif=livePhotoExif(identifier),newIinf=addHeifIinf(src,iinf,newId),newIref=buildHeifIref(src,irefBox,newId,primaryId);
+    const makeItems=(shift,newOffset)=>[...iloc.items.map(item=>({...item,extents:item.extents.map(extent=>({...extent,offset:item.method===0&&extent.offset>=meta.end?extent.offset+shift:extent.offset}))})),{itemId:newId,method:0,dataRef:0,base:0,extents:[{index:0,offset:newOffset,length:exif.length}]}];
+    const makeMeta=ilocBytes=>{const parts=[];let insertedIref=false;for(const child of children){if(child.type==='iinf'){parts.push(newIinf);if(!irefBox){parts.push(newIref);insertedIref=true;}}else if(child.type==='iref'){parts.push(newIref);insertedIref=true;}else if(child.type==='iloc')parts.push(ilocBytes);else parts.push(src.slice(child.at,child.end));}if(!insertedIref)parts.push(newIref);return qtBox('meta',bytes(fullBox(metaVersion,metaFlags),...parts));};
+    const initialMeta=makeMeta(buildHeifIloc(iloc,makeItems(0,0))),delta=initialMeta.length-meta.size,exifOffset=src.length+delta+8,finalMeta=makeMeta(buildHeifIloc(iloc,makeItems(delta,exifOffset)));
+    return bytes(src.slice(0,meta.at),finalMeta,src.slice(meta.end),qtBox('mdat',exif));
+  }
+  async function liveStillHeic(frozen,identifier){
+    const stillCanvas=surface(frozen.width,frozen.height),ctx=stillCanvas.getContext('2d',{alpha:false,willReadFrequently:true}),bg=surface(frozen.width,frozen.height);bg.getContext('2d').drawImage(background,0,0,frozen.width,frozen.height);ctx.drawImage(bg,0,0);drawText(ctx,frozen,1,bg);
+    try{
+      $('videoStatus').textContent='Кодируем финальный кадр в HEIC…';const module=await loadHeicModule(),image=ctx.getImageData(0,0,stillCanvas.width,stillCanvas.height),rgba=new Uint8Array(image.data.buffer,image.data.byteOffset,image.data.byteLength),result=module.jsEncodeImage(rgba,stillCanvas.width,stillCanvas.height);if(!result||result.err)throw new Error(result?.err||'HEIC-кодировщик вернул пустой результат.');const encoded=new Uint8Array(result.data);return new Blob([heicWithContentIdentifier(encoded.slice(),identifier)],{type:'image/heic'});
+    }finally{stillCanvas.width=bg.width=1;}
+  }
   let crcTable=null;
   function crc32(data){if(!crcTable){crcTable=new Uint32Array(256);for(let n=0;n<256;n++){let c=n;for(let k=0;k<8;k++)c=(c&1)?0xedb88320^(c>>>1):c>>>1;crcTable[n]=c>>>0;}}let c=0xffffffff;for(const b of data)c=crcTable[(c^b)&255]^(c>>>8);return (c^0xffffffff)>>>0;}
   async function zipFiles(files){
@@ -366,14 +431,13 @@
     if(exporting)return;const type=mp4Type();if(!type){$('videoStatus').textContent='Live Photo требует MP4/H.264. Откройте сайт в Safari, новом Chrome или Edge.';return;}exporting=true;
     try{
       const {blob:rawVideo,dims,frozen}=await recordAnimation(type,'Готовим живые обои: записываем однократную анимацию…','live');
-      const stillRaw=await liveStillFrame(dims,frozen),identifier=uuid(),stillTime=Number((LIVE_DURATION-1/30).toFixed(3)),still=await jpegWithContentIdentifier(stillRaw,identifier),movie=await movWithContentIdentifier(rawVideo,identifier,stillTime),base=`LIVE_${identifier.replaceAll('-','').slice(0,12)}`;
-      const photoFile=new File([still],base+'.JPG',{type:'image/jpeg'}),movieFile=new File([movie],base+'.MOV',{type:'video/quicktime'});
-      const archive=await zipFiles([photoFile,movieFile]),livp=new File([archive],`hello-live-photo-${dims.width}x${dims.height}.livp`,{type:'application/zip'});
-      if(isMobile()&&navigator.share&&navigator.canShare&&navigator.canShare({files:[livp]})){
-        try{await navigator.share({files:[livp],title:'Hello Live Photo'});$('videoStatus').textContent='Live Photo .livp готов: однократная анимация без обратного движения. Импортируйте файл через PhotoSync.';return;}catch(e){if(e.name==='AbortError'){$('videoStatus').textContent='Экспорт Live Photo отменён.';return;}}
+      const identifier=uuid(),stillTime=.5,still=await liveStillHeic(frozen,identifier),movie=await movWithContentIdentifier(rawVideo,identifier,stillTime),base=`LIVE_${identifier.replaceAll('-','').slice(0,12)}`;
+      const photoFile=new File([still],base+'.HEIC',{type:'image/heic'}),movieFile=new File([movie],base+'.MOV',{type:'video/quicktime'});
+      if(isMobile()&&navigator.share&&navigator.canShare&&navigator.canShare({files:[photoFile,movieFile]})){
+        try{await navigator.share({files:[photoFile,movieFile],title:'Hello Live Photo'});$('videoStatus').textContent='Готово: HEIC + MOV с общим Content Identifier. Передайте оба файла в PhotoSync вместе.';return;}catch(e){if(e.name==='AbortError'){$('videoStatus').textContent='Экспорт Live Photo отменён.';return;}}
       }
-      download(livp);
-      $('videoStatus').textContent='Live Photo .livp готов. Внутри короткая однократная анимация без обратного движения, variation-identifier 2, LOOP 0 и связанная пара JPG + MOV.';
+      const archive=await zipFiles([photoFile,movieFile]),zip=new File([archive],`hello-live-photo-${dims.width}x${dims.height}.zip`,{type:'application/zip'});download(zip);
+      $('videoStatus').textContent='Готово: ZIP содержит связанную пару HEIC + MOV. Распакуйте архив и импортируйте оба файла вместе.';
     }catch(e){$('videoStatus').textContent=e.message;}
     finally{exporting=false;updateVideoInfo();}
   }
