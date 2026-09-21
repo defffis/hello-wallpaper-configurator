@@ -30,6 +30,7 @@ vm.runInContext(source,context);const qa=context.qa;
  qa.set({width:640,height:960,material:'solid',text:'hello',showText:true});const plain=c.toBuffer('image/png');qa.set({material:'glass'});check('Glass differs from solid',()=>assert(!plain.equals(c.toBuffer('image/png'))));
  fs.writeFileSync(root+'/assets/glass-preview.png',c.toBuffer('image/png'));
  qa.set({glassDepth:10});const shallow=c.toBuffer('image/png');qa.set({glassDepth:100});check('Glass depth changes pixels',()=>assert(!shallow.equals(c.toBuffer('image/png'))));
+ const glassOnPurple=c.toBuffer('image/png');qa.set({bg1:'#63c9c1',bg2:'#c8f1e9'});const glassOnMint=c.toBuffer('image/png');check('Liquid Glass optically responds to underlying content',()=>assert(!glassOnPurple.equals(glassOnMint)));
  check('Animation starts empty, completes once and holds',()=>{assert.equal(qa.motionProgress(0),0);assert.equal(qa.motionProgress(.2),0);assert(qa.motionProgress(1)>0&&qa.motionProgress(1)<1);assert.equal(qa.motionProgress(2.2),1);assert.equal(qa.motionProgress(200),1)});
  const bg=createCanvas(640,960);bg.getContext('2d').fillStyle='#719ba6';bg.getContext('2d').fillRect(0,0,640,960);
  const hashes=[];for(const time of [0,.7,1.5,2.8,10]){const frame=createCanvas(640,960),ctx=frame.getContext('2d');ctx.drawImage(bg,0,0);qa.drawText(ctx,qa.state,qa.motionProgress(time),bg);hashes.push(frame.toBuffer('image/png'));}

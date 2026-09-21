@@ -169,8 +169,8 @@
     if(!s.showText||!s.text.trim()||progress<=0||s.textOpacity<=0)return;
     const writing=s.text.trim()==='hello'&&s.animation==='write',alpha=s.textOpacity/100*(writing?1:progress),path=partialHello(writing?progress:1);
     const hello=s.text.trim()==='hello',factor=s.width*s.textSize/100/806,angle=s.angle*Math.PI/180;
-    function shape(c,color){c.fillStyle=color;c.strokeStyle=color;c.lineCap='round';c.lineJoin='round';
-      if(hello){c.scale(factor,factor);c.translate(-400,-116);c.lineWidth=(s.material==='glass'?24:15)*s.stroke/100;c.stroke(path);}
+    function shape(c,color,lineScale=1){c.fillStyle=color;c.strokeStyle=color;c.lineCap='round';c.lineJoin='round';
+      if(hello){c.scale(factor,factor);c.translate(-400,-116);c.lineWidth=(s.material==='glass'?36:15)*s.stroke/100*lineScale;c.stroke(path);}
       else{c.font='160px "Snell Roundhand", "Segoe Script", cursive';c.textAlign='center';c.textBaseline='middle';const scale=Math.min(s.width*s.textSize/100/Math.max(1,c.measureText(s.text).width),s.height*.25/160);c.scale(scale,scale);c.fillText(s.text,0,0);}
     }
     target.save();target.globalAlpha=alpha;target.translate(s.width*s.textX/100,s.height*s.textY/100);target.rotate(angle);
@@ -179,14 +179,36 @@
     const pad=Math.max(12,factor*32),lw=Math.ceil(s.width*s.textSize/100+pad*2),lh=Math.ceil((hello?factor*245:s.height*.38)+pad*2);
     const mask=surface(lw,lh),m=mask.getContext('2d');m.translate(lw/2,lh/2);shape(m,'#fff');
     const glass=surface(lw,lh),g=glass.getContext('2d'),depth=s.glassDepth/100;
-    g.save();g.translate(lw/2,lh/2);g.scale(1+depth*.09,1+depth*.09);g.rotate(-angle);g.translate(-s.width*s.textX/100+depth*factor*5,-s.height*s.textY/100+depth*factor*4);g.drawImage(backdrop,0,0);g.restore();
-    g.globalCompositeOperation='destination-in';g.drawImage(mask,0,0);g.globalCompositeOperation='source-atop';
-    g.globalAlpha=.08+depth*.14;g.fillStyle=s.textColor;g.fillRect(0,0,lw,lh);g.globalAlpha=1;
-    const gleam=g.createLinearGradient(0,lh*.1,lw*.15,lh*.9);gleam.addColorStop(0,`rgba(255,255,255,${.38+depth*.2})`);gleam.addColorStop(.42,'rgba(255,255,255,.06)');gleam.addColorStop(.65,`rgba(4,35,70,${depth*.16})`);gleam.addColorStop(1,`rgba(220,255,255,${.3+depth*.15})`);g.fillStyle=gleam;g.fillRect(0,0,lw,lh);g.globalCompositeOperation='source-over';
-    const edge=surface(lw,lh),e=edge.getContext('2d'),bevel=Math.max(.7,factor*(1.5+depth*2.3));
-    function rim(dx,dy,color){e.clearRect(0,0,lw,lh);e.globalCompositeOperation='source-over';e.drawImage(mask,0,0);e.globalCompositeOperation='destination-out';e.drawImage(mask,dx,dy);e.globalCompositeOperation='source-in';e.fillStyle=color;e.fillRect(0,0,lw,lh);g.drawImage(edge,0,0);}
-    rim(-bevel,-bevel,`rgba(14,43,89,${.25+depth*.28})`);rim(bevel,bevel,`rgba(245,255,255,${.6+depth*.35})`);
-    target.shadowColor=`rgba(5,30,60,${depth*.3})`;target.shadowBlur=factor*(2+depth*4);target.shadowOffsetY=factor*(1+depth*3);target.drawImage(glass,-lw/2,-lh/2);target.restore();
+    // Liquid Glass is built as an optical stack: magnified content, softened content,
+    // directional caustics, colour dispersion, and a narrow moving-light reflection.
+    // The background is sampled instead of replaced by an opaque translucent fill.
+    function sampleBackdrop(c,scale,dx,dy,opacity=1){c.save();c.globalAlpha=opacity;c.translate(lw/2+dx,lh/2+dy);c.scale(scale,scale);c.rotate(-angle);c.translate(-s.width*s.textX/100,-s.height*s.textY/100);c.drawImage(backdrop,0,0);c.restore();}
+    const opticalScale=1.018+depth*.052,shift=Math.max(.45,factor*(.8+depth*2.7));
+    sampleBackdrop(g,opticalScale,-shift*.32,-shift*.22);
+    // A few faint offset samples approximate the soft scattering of thick glass
+    // without blurring the wallpaper outside the letterform.
+    for(const [dx,dy] of [[shift,0],[-shift,0],[0,shift],[0,-shift]])sampleBackdrop(g,opticalScale,dx*.38,dy*.38,.055+depth*.025);
+    g.globalCompositeOperation='destination-in';g.drawImage(mask,0,0);
+    g.globalCompositeOperation='source-atop';g.globalAlpha=.075+depth*.105;g.fillStyle=s.textColor;g.fillRect(0,0,lw,lh);g.globalAlpha=1;
+    const bodyLight=g.createLinearGradient(lw*.12,lh*.08,lw*.88,lh*.92);bodyLight.addColorStop(0,`rgba(255,255,255,${.16+depth*.16})`);bodyLight.addColorStop(.27,'rgba(255,255,255,.025)');bodyLight.addColorStop(.54,`rgba(111,235,255,${.055+depth*.08})`);bodyLight.addColorStop(.76,'rgba(126,110,235,.035)');bodyLight.addColorStop(1,`rgba(255,255,255,${.11+depth*.1})`);g.fillStyle=bodyLight;g.fillRect(0,0,lw,lh);g.globalCompositeOperation='source-over';
+
+    const edge=surface(lw,lh),e=edge.getContext('2d'),bevel=Math.max(.85,factor*(1.8+depth*3.4));
+    function rim(dx,dy,color,mode='source-over'){
+      e.clearRect(0,0,lw,lh);e.globalCompositeOperation='source-over';e.drawImage(mask,0,0);e.globalCompositeOperation='destination-out';e.drawImage(mask,dx,dy);e.globalCompositeOperation='source-in';e.fillStyle=color;e.fillRect(0,0,lw,lh);g.globalCompositeOperation=mode;g.drawImage(edge,0,0);g.globalCompositeOperation='source-over';
+    }
+    // Opposing dark/light borders make the stroke refract instead of looking embossed.
+    rim(-bevel,-bevel,`rgba(10,25,64,${.24+depth*.26})`,'multiply');
+    rim(bevel,bevel,`rgba(255,255,255,${.64+depth*.32})`,'screen');
+    // Cyan/violet separation is subtle, but gives bright edges the prismatic quality
+    // visible in Apple's layered material on colourful content.
+    rim(bevel*.44,-bevel*.2,`rgba(105,246,255,${.16+depth*.16})`,'screen');
+    rim(-bevel*.42,bevel*.18,`rgba(148,126,255,${.1+depth*.13})`,'screen');
+
+    // Reuse the edge buffer for the specular core to keep large exports memory-safe.
+    e.clearRect(0,0,lw,lh);e.globalCompositeOperation='source-over';e.save();e.translate(lw/2,lh/2);e.globalAlpha=hello?1:.34;shape(e,'#fff',hello ? .34 : 1);e.restore();e.globalAlpha=1;e.globalCompositeOperation='source-in';
+    const gleam=e.createLinearGradient(lw*.18,0,lw*.74,lh);gleam.addColorStop(0,'rgba(255,255,255,0)');gleam.addColorStop(.28,`rgba(255,255,255,${.26+depth*.18})`);gleam.addColorStop(.48,`rgba(226,255,255,${.62+depth*.3})`);gleam.addColorStop(.62,`rgba(255,255,255,${.16+depth*.14})`);gleam.addColorStop(1,'rgba(255,255,255,0)');e.fillStyle=gleam;e.fillRect(0,0,lw,lh);g.globalCompositeOperation='screen';g.drawImage(edge,0,0);g.globalCompositeOperation='source-over';
+
+    target.shadowColor=`rgba(13,24,60,${.18+depth*.18})`;target.shadowBlur=Math.max(1,factor*(3+depth*5));target.shadowOffsetX=factor*depth*1.2;target.shadowOffsetY=factor*(1.5+depth*3.2);target.drawImage(glass,-lw/2,-lh/2);target.restore();
     mask.width=glass.width=edge.width=1;
   }
   let playing=0,previewStart=0,exporting=false,cancelRecording=null;
