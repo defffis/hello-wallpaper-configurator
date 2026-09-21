@@ -189,8 +189,10 @@
     // without blurring the wallpaper outside the letterform.
     for(const [dx,dy] of [[shift,0],[-shift,0],[0,shift],[0,-shift]])sampleBackdrop(g,opticalScale,dx*.38,dy*.38,.055+depth*.025);
     g.globalCompositeOperation='destination-in';g.drawImage(mask,0,0);
-    g.globalCompositeOperation='source-atop';g.globalAlpha=.075+depth*.105;g.fillStyle=s.textColor;g.fillRect(0,0,lw,lh);g.globalAlpha=1;
-    const bodyLight=g.createLinearGradient(lw*.12,lh*.08,lw*.88,lh*.92);bodyLight.addColorStop(0,`rgba(255,255,255,${.16+depth*.16})`);bodyLight.addColorStop(.27,'rgba(255,255,255,.025)');bodyLight.addColorStop(.54,`rgba(111,235,255,${.055+depth*.08})`);bodyLight.addColorStop(.76,'rgba(126,110,235,.035)');bodyLight.addColorStop(1,`rgba(255,255,255,${.11+depth*.1})`);g.fillStyle=bodyLight;g.fillRect(0,0,lw,lh);g.globalCompositeOperation='source-over';
+    // Keep the chosen tint uniform across the whole word. Dark colours need more
+    // optical density or the backdrop would overpower them and turn letters blue.
+    const tintRgb=rgb(s.textColor),tintLum=(tintRgb[0]*.2126+tintRgb[1]*.7152+tintRgb[2]*.0722)/255;
+    g.globalCompositeOperation='source-atop';g.globalAlpha=.075+depth*.105+(1-tintLum)*(.28+depth*.18);g.fillStyle=s.textColor;g.fillRect(0,0,lw,lh);g.globalAlpha=1;g.globalCompositeOperation='source-over';
 
     const edge=surface(lw,lh),e=edge.getContext('2d'),bevel=Math.max(.85,factor*(1.8+depth*3.4));
     function rim(dx,dy,color,mode='source-over'){
@@ -201,12 +203,13 @@
     rim(bevel,bevel,`rgba(255,255,255,${.64+depth*.32})`,'screen');
     // Cyan/violet separation is subtle, but gives bright edges the prismatic quality
     // visible in Apple's layered material on colourful content.
-    rim(bevel*.44,-bevel*.2,`rgba(105,246,255,${.16+depth*.16})`,'screen');
-    rim(-bevel*.42,bevel*.18,`rgba(148,126,255,${.1+depth*.13})`,'screen');
+    const dispersion=(.045+depth*.055)*(.18+tintLum*.82);
+    rim(bevel*.44,-bevel*.2,`rgba(105,246,255,${dispersion})`,'screen');
+    rim(-bevel*.42,bevel*.18,`rgba(148,126,255,${dispersion*.72})`,'screen');
 
     // Reuse the edge buffer for the specular core to keep large exports memory-safe.
     e.clearRect(0,0,lw,lh);e.globalCompositeOperation='source-over';e.save();e.translate(lw/2,lh/2);e.globalAlpha=hello?1:.34;shape(e,'#fff',hello ? .34 : 1);e.restore();e.globalAlpha=1;e.globalCompositeOperation='source-in';
-    const gleam=e.createLinearGradient(lw*.18,0,lw*.74,lh);gleam.addColorStop(0,'rgba(255,255,255,0)');gleam.addColorStop(.28,`rgba(255,255,255,${.26+depth*.18})`);gleam.addColorStop(.48,`rgba(226,255,255,${.62+depth*.3})`);gleam.addColorStop(.62,`rgba(255,255,255,${.16+depth*.14})`);gleam.addColorStop(1,'rgba(255,255,255,0)');e.fillStyle=gleam;e.fillRect(0,0,lw,lh);g.globalCompositeOperation='screen';g.drawImage(edge,0,0);g.globalCompositeOperation='source-over';
+    const gleam=e.createLinearGradient(0,0,0,lh);gleam.addColorStop(0,'rgba(255,255,255,.28)');gleam.addColorStop(.35,`rgba(255,255,255,${.38+depth*.2})`);gleam.addColorStop(.68,`rgba(255,255,255,${.3+depth*.16})`);gleam.addColorStop(1,'rgba(255,255,255,.24)');e.fillStyle=gleam;e.fillRect(0,0,lw,lh);g.globalCompositeOperation='screen';g.drawImage(edge,0,0);g.globalCompositeOperation='source-over';
 
     target.shadowColor=`rgba(13,24,60,${.18+depth*.18})`;target.shadowBlur=Math.max(1,factor*(3+depth*5));target.shadowOffsetX=factor*depth*1.2;target.shadowOffsetY=factor*(1.5+depth*3.2);target.drawImage(glass,-lw/2,-lh/2);target.restore();
     mask.width=glass.width=edge.width=1;
