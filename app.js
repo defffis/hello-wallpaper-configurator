@@ -217,8 +217,8 @@
   let playing=0,previewStart=0,exporting=false,cancelRecording=null;
   const totalDuration=()=>state.duration+.8;
   function motionProgress(seconds,s=state){const t=clamp((seconds-.2)/s.duration,0,1);return t*t*(3-2*t);}
-  const LIVE_DURATION=58/30,LIVE_KEY_PROGRESS=.025;
-  function liveMotionProgress(seconds){const position=clamp(seconds/LIVE_DURATION,0,1),half=position<=.5?position*2:(1-position)*2,eased=half*half*(3-2*half);return LIVE_KEY_PROGRESS+(1-LIVE_KEY_PROGRESS)*eased;}
+  const LIVE_DURATION=58/30;
+  function liveMotionProgress(seconds){const t=clamp(seconds/LIVE_DURATION,0,1);return t*t*(3-2*t);}
   function stopPreview(){if(playing)cancelAnimationFrame(playing);playing=0;$('play').textContent='▶ Проиграть один раз';}
   function motionFrame(seconds){const c=$('previewCanvas'),pc=c.getContext('2d');pc.globalAlpha=1;pc.drawImage(background,0,0,c.width,c.height);const s={...state,width:c.width,height:c.height};drawText(pc,s,motionProgress(seconds),c);$('timeline').value=Math.round(seconds/totalDuration()*100);$('playState').textContent=seconds>=totalDuration()?'Финальный кадр · без повтора':`${seconds.toFixed(1)} / ${totalDuration().toFixed(1)} с`;}
   $('quickGlass').addEventListener('click',()=>{state.material=state.material==='glass'?'solid':'glass';updateUI(true);changed();});
@@ -237,7 +237,7 @@
     $('videoInfo').textContent=type?`${d.width} × ${d.height} px · до 30 кадров/с · ≈${totalDuration().toFixed(1)} с · ${type.includes('mp4')?'MP4':'WebM (MP4 недоступен в этом режиме)'}`:'Этот браузер не поддерживает запись видео. Попробуйте современный Safari, Chrome или Edge.';
     $('exportVideo').disabled=!type||!state.showText||!state.text.trim();
     $('exportLivePhoto').disabled=!nativeType||!state.showText||!state.text.trim();
-    $('livePhotoHint').textContent=nativeType?'Профиль живых обоев iOS: 1,93 с, Bounce, одинаковые начальный и конечный кадры, variation-identifier 2 и LOOP 0. Импортируйте .livp через PhotoSync или другое совместимое приложение.':'Для Live Photo нужен браузер, который умеет записывать H.264/MP4 (обычно Safari, новый Chrome или Edge).';
+    $('livePhotoHint').textContent=nativeType?'Профиль живых обоев iOS: 1,93 с, однократное появление без обратного движения, variation-identifier 2 и LOOP 0. Импортируйте .livp через PhotoSync или другое совместимое приложение.':'Для Live Photo нужен браузер, который умеет записывать H.264/MP4 (обычно Safari, новый Chrome или Edge).';
   }
   async function recordAnimation(type,message='Записываем анимацию. Оставьте эту вкладку открытой…',profile='standard'){
     stopPreview();if(raf)cancelAnimationFrame(raf);render();
@@ -351,7 +351,7 @@
     view.setUint32(info.mvhd.end-4,info.trackId+1,false);
     return new Blob([copy.slice(0,moov.end),track,meta,loop,copy.slice(moov.end),qtBox('mdat',sample)],{type:'video/quicktime'});
   }
-  async function liveStillFrame(dims,frozen){const stillCanvas=surface(dims.width,dims.height),ctx=stillCanvas.getContext('2d',{alpha:false}),bg=surface(dims.width,dims.height);bg.getContext('2d').drawImage(background,0,0,dims.width,dims.height);ctx.drawImage(bg,0,0);drawText(ctx,{...frozen,...dims},liveMotionProgress(0),bg);try{return await new Promise((resolve,reject)=>stillCanvas.toBlob(b=>b?resolve(b):reject(new Error('Не удалось создать ключевой кадр.')),'image/jpeg',.95));}finally{stillCanvas.width=bg.width=1;}}
+  async function liveStillFrame(dims,frozen){const stillCanvas=surface(dims.width,dims.height),ctx=stillCanvas.getContext('2d',{alpha:false}),bg=surface(dims.width,dims.height);bg.getContext('2d').drawImage(background,0,0,dims.width,dims.height);ctx.drawImage(bg,0,0);drawText(ctx,{...frozen,...dims},liveMotionProgress(LIVE_DURATION),bg);try{return await new Promise((resolve,reject)=>stillCanvas.toBlob(b=>b?resolve(b):reject(new Error('Не удалось создать ключевой кадр.')),'image/jpeg',.95));}finally{stillCanvas.width=bg.width=1;}}
   let crcTable=null;
   function crc32(data){if(!crcTable){crcTable=new Uint32Array(256);for(let n=0;n<256;n++){let c=n;for(let k=0;k<8;k++)c=(c&1)?0xedb88320^(c>>>1):c>>>1;crcTable[n]=c>>>0;}}let c=0xffffffff;for(const b of data)c=crcTable[(c^b)&255]^(c>>>8);return (c^0xffffffff)>>>0;}
   async function zipFiles(files){
@@ -365,15 +365,15 @@
   async function exportLivePhoto(){
     if(exporting)return;const type=mp4Type();if(!type){$('videoStatus').textContent='Live Photo требует MP4/H.264. Откройте сайт в Safari, новом Chrome или Edge.';return;}exporting=true;
     try{
-      const {blob:rawVideo,dims,frozen}=await recordAnimation(type,'Готовим живые обои: записываем короткую Bounce-анимацию…','live');
+      const {blob:rawVideo,dims,frozen}=await recordAnimation(type,'Готовим живые обои: записываем однократную анимацию…','live');
       const stillRaw=await liveStillFrame(dims,frozen),identifier=uuid(),stillTime=Number((LIVE_DURATION-1/30).toFixed(3)),still=await jpegWithContentIdentifier(stillRaw,identifier),movie=await movWithContentIdentifier(rawVideo,identifier,stillTime),base=`LIVE_${identifier.replaceAll('-','').slice(0,12)}`;
       const photoFile=new File([still],base+'.JPG',{type:'image/jpeg'}),movieFile=new File([movie],base+'.MOV',{type:'video/quicktime'});
       const archive=await zipFiles([photoFile,movieFile]),livp=new File([archive],`hello-live-photo-${dims.width}x${dims.height}.livp`,{type:'application/zip'});
       if(isMobile()&&navigator.share&&navigator.canShare&&navigator.canShare({files:[livp]})){
-        try{await navigator.share({files:[livp],title:'Hello Live Photo'});$('videoStatus').textContent='Live Photo .livp готов: профиль Bounce для живых обоев iOS. Импортируйте файл через PhotoSync.';return;}catch(e){if(e.name==='AbortError'){$('videoStatus').textContent='Экспорт Live Photo отменён.';return;}}
+        try{await navigator.share({files:[livp],title:'Hello Live Photo'});$('videoStatus').textContent='Live Photo .livp готов: однократная анимация без обратного движения. Импортируйте файл через PhotoSync.';return;}catch(e){if(e.name==='AbortError'){$('videoStatus').textContent='Экспорт Live Photo отменён.';return;}}
       }
       download(livp);
-      $('videoStatus').textContent='Live Photo .livp готов. Внутри короткая Bounce-анимация, variation-identifier 2, LOOP 0 и связанная пара JPG + MOV.';
+      $('videoStatus').textContent='Live Photo .livp готов. Внутри короткая однократная анимация без обратного движения, variation-identifier 2, LOOP 0 и связанная пара JPG + MOV.';
     }catch(e){$('videoStatus').textContent=e.message;}
     finally{exporting=false;updateVideoInfo();}
   }
